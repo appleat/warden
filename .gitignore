@@ -1,0 +1,8 @@
+bin/
+dist/
+data/
+web/dist/
+web/node_modules/
+*.exe
+*.log
+tmpdata/

@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 160" width="520" height="160" role="img" aria-label="Warden">
+  <title>Warden</title>
+  <defs>
+    <linearGradient id="wl-tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6C8CFF"/>
+      <stop offset="52%" stop-color="#3B63E8"/>
+      <stop offset="100%" stop-color="#2440B4"/>
+    </linearGradient>
+    <radialGradient id="wl-glow" cx="0.24" cy="0.14" r="0.78">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.24"/>
+      <stop offset="60%" stop-color="#FFFFFF" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="wl-face" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#E2EAFF"/>
+    </linearGradient>
+    <!-- 提示符用 userSpaceOnUse：横线 bbox 高度为 0，objectBoundingBox 渐变会失效 -->
+    <linearGradient id="wl-prompt" gradientUnits="userSpaceOnUse" x1="184" y1="228" x2="340" y2="330">
+      <stop offset="0%" stop-color="#3E63E6"/>
+      <stop offset="100%" stop-color="#22389F"/>
+    </linearGradient>
+  </defs>
+
+  <g transform="scale(0.3125)">
+    <rect width="512" height="512" rx="116" fill="url(#wl-tile)"/>
+    <rect width="512" height="512" rx="116" fill="url(#wl-glow)"/>
+    <path d="M152 152 H360 Q376 152 376 168 V274 C376 348 328 400 256 420 C184 400 136 348 136 274 V168 Q136 152 152 152 Z"
+          fill="url(#wl-face)"/>
+    <g fill="none" stroke="url(#wl-prompt)" stroke-width="30" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M184 228 L240 278 L184 328"/>
+      <path d="M280 328 H328"/>
+    </g>
+  </g>
+
+  <text x="196" y="109"
+        font-family="Inter, 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif"
+        font-size="84" font-weight="700" letter-spacing="-2" fill="#1C2434">Warden</text>
+</svg>

@@ -1,0 +1,32 @@
+# Warden 配置文件（所有字段均可被环境变量覆盖，前缀 WARDEN_）
+
+# 运行模式：
+#   server —— 控制端，提供 Web 界面、账号体系、主机纳管（默认）
+#   agent  —— 被管端，只暴露运维接口，由控制端带令牌访问
+mode: "server"
+
+# ---------- 控制端 ----------
+listen: ":3001"
+data_dir: "./data"
+# 文件管理可访问的根目录；Linux 上通常为 "/"，可缩小到 /data 提高安全性
+file_root: "/"
+# 不填则自动生成到 data/jwt.key
+jwt_secret: ""
+token_hours: 24
+# 启用 HTTPS 时填写
+cert_file: ""
+key_file: ""
+
+# ---------- 被管端（mode=agent 时生效）----------
+agent_listen: ":3002"
+# 必须与控制端「添加主机」时生成的令牌一致，否则一律拒绝
+agent_token: ""
+# 仅用于日志与界面展示
+agent_name: ""
+
+# ---------- 通用 ----------
+log_level: "info"
+# 留空使用本机默认 socket（/var/run/docker.sock）
+docker_host: ""
+# 留空自动探测 $SHELL 或 /bin/bash
+shell: ""
