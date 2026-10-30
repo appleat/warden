@@ -84,6 +84,11 @@ func NewAgentRouter(d *Deps, token string) *gin.Engine {
 			api.GET("/containers/:id/stats", d.containerStats)
 			api.GET("/containers/:id/logs", d.containerLogs)
 
+			api.GET("/compose/stacks", d.listComposeStacks)
+			api.GET("/compose/file", d.getComposeFile)
+			api.PUT("/compose/file", d.saveComposeFile)
+			api.POST("/compose/up", d.composeUp)
+
 			api.GET("/images", d.listImages)
 			api.POST("/images/pull", d.pullImage)
 			api.DELETE("/images/:id", d.removeImage)

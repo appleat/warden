@@ -145,6 +145,63 @@ func readDockerStream(rc io.Reader, tty bool) (string, error) {
 	return sb.String(), err
 }
 
+// ---------- docker-compose 堆栈 ----------
+
+func (d *Deps) listComposeStacks(c *gin.Context) {
+	items, err := d.Docker.Stacks(c.Request.Context())
+	if err != nil {
+		httpx.ServerError(c, err.Error())
+		return
+	}
+	httpx.OK(c, gin.H{"items": items})
+}
+
+func (d *Deps) getComposeFile(c *gin.Context) {
+	data, err := d.Docker.ComposeFile(c.Request.Context(), c.Query("project"))
+	if err != nil {
+		httpx.ServerError(c, err.Error())
+		return
+	}
+	httpx.OK(c, data)
+}
+
+func (d *Deps) saveComposeFile(c *gin.Context) {
+	var req struct {
+		Project string `json:"project" binding:"required"`
+		Content string `json:"content"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.BadRequest(c, "参数不完整")
+		return
+	}
+	path, err := d.Docker.SaveComposeFile(c.Request.Context(), req.Project, req.Content)
+	if err != nil {
+		httpx.ServerError(c, err.Error())
+		return
+	}
+	middleware.SetAuditDetail(c, "保存 compose 文件 "+path)
+	httpx.OKMsg(c, "已保存，原文件备份为 .bak", gin.H{"path": path})
+}
+
+// composeUp 应用堆栈配置。无论成败都返回 200 + {ok, output}，
+// 让前端把 compose 的完整输出展示在日志框里，而不是塞进一条报错气泡。
+func (d *Deps) composeUp(c *gin.Context) {
+	var req struct {
+		Project string `json:"project" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.BadRequest(c, "参数不完整")
+		return
+	}
+	out, err := d.Docker.ComposeUp(c.Request.Context(), req.Project)
+	if err != nil {
+		httpx.OK(c, gin.H{"ok": false, "output": out})
+		return
+	}
+	middleware.SetAuditDetail(c, "应用 compose 项目 "+req.Project)
+	httpx.OKMsg(c, "已应用", gin.H{"ok": true, "output": out})
+}
+
 // ---------- 镜像 / 卷 / 网络 ----------
 
 func (d *Deps) listImages(c *gin.Context) {

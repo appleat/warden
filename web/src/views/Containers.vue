@@ -17,7 +17,11 @@
       <el-input v-model="q" placeholder="搜索名称 / 镜像 / ID" clearable style="width: 240px" @input="onSearch">
         <template #prefix><el-icon><Search /></el-icon></template>
       </el-input>
-      <el-checkbox v-model="showAll" @change="load">显示已停止</el-checkbox>
+      <el-radio-group v-model="stateFilter" size="small">
+        <el-radio-button label="all">全部</el-radio-button>
+        <el-radio-button label="running">运行中</el-radio-button>
+        <el-radio-button label="stopped">已停止</el-radio-button>
+      </el-radio-group>
       <el-radio-group v-model="tab" size="small" style="margin-left: 6px">
         <el-radio-button label="containers">容器</el-radio-button>
         <el-radio-button label="images">镜像</el-radio-button>
@@ -42,7 +46,29 @@
           {{ statsUnavailableReason }}
         </div>
       </el-alert>
-      <el-table :data="items" v-loading="loading" size="default" style="width: 100%" empty-text="没有容器，点击右上角「新建容器」创建" @row-click="openDetail" row-style="cursor:pointer">
+      <template v-for="g in groupedList" :key="g.key">
+        <div class="stack-bar" @click="toggleGroup(g.key)">
+          <el-icon class="stack-chevron" :class="{ collapsed: collapsedGroups[g.key] }"><CaretRight /></el-icon>
+          <span class="stack-name" :class="{ loose: !g.stack }">{{ g.title }}</span>
+          <el-tag size="small" :type="g.running ? 'success' : 'info'" effect="light">
+            {{ g.running }}/{{ g.containers.length }} 运行中
+          </el-tag>
+          <span v-if="g.dir" class="muted mono stack-dir">{{ g.dir }}</span>
+          <div class="spacer"></div>
+          <el-button v-if="g.stack" size="small" @click.stop="openCompose(g.stack)">
+            <el-icon style="margin-right: 4px"><EditPen /></el-icon>编辑 Compose
+          </el-button>
+        </div>
+        <el-table
+          v-show="!collapsedGroups[g.key]"
+          :data="g.containers"
+          v-loading="loading"
+          size="default"
+          style="width: 100%"
+          :empty-text="emptyText"
+          @row-click="openDetail"
+          row-style="cursor:pointer"
+        >
         <el-table-column label="名称" min-width="190">
           <template #default="{ row }">
             <div class="row">
@@ -126,7 +152,8 @@
             <el-button link type="danger" size="small" @click.stop="remove(row)">删除</el-button>
           </template>
         </el-table-column>
-      </el-table>
+        </el-table>
+      </template>
     </div>
 
     <div v-show="tab === 'images'" class="card" style="padding: 0">
@@ -216,7 +243,15 @@
               <el-descriptions-item label="容器 ID"><span class="mono">{{ inspect.Id?.slice(0, 24) }}</span></el-descriptions-item>
               <el-descriptions-item label="重启策略">{{ inspect.HostConfig?.RestartPolicy?.Name || 'no' }}</el-descriptions-item>
               <el-descriptions-item label="启动时间">{{ fmtTime(inspect.State?.StartedAt) }}</el-descriptions-item>
-              <el-descriptions-item label="退出码">{{ inspect.State?.ExitCode ?? '-' }}</el-descriptions-item>
+              <el-descriptions-item label="退出码">
+                <span>{{ inspect.State?.ExitCode ?? '-' }}</span>
+                <el-tooltip v-if="exitHint" placement="top" effect="dark">
+                  <template #content>
+                    <div style="max-width: 300px; line-height: 1.7; font-size: 12px">{{ exitHint.long }}</div>
+                  </template>
+                  <span class="exit-hint">{{ exitHint.short }}</span>
+                </el-tooltip>
+              </el-descriptions-item>
               <el-descriptions-item label="工作目录">{{ inspect.Config?.WorkingDir || '/' }}</el-descriptions-item>
               <el-descriptions-item label="网络模式">{{ inspect.HostConfig?.NetworkMode || '-' }}</el-descriptions-item>
               <el-descriptions-item label="启动命令" :span="2">
@@ -331,15 +366,42 @@
         <el-button type="primary" :loading="pulling" @click="doPull">开始拉取</el-button>
       </template>
     </el-dialog>
+
+    <!-- 编辑 docker-compose -->
+    <el-dialog v-model="composeVisible" :title="'编辑 Compose · ' + composeProject" width="820px" top="4vh">
+      <div class="row" style="margin-bottom: 8px; align-items: center">
+        <span class="muted mono" style="font-size: 12px; word-break: break-all">{{ composePath }}</span>
+        <div class="spacer"></div>
+        <el-button size="small" :disabled="composeBusy" @click="loadCompose">重新加载</el-button>
+      </div>
+      <el-input
+        v-model="composeContent"
+        type="textarea"
+        class="compose-editor mono"
+        :rows="20"
+        resize="vertical"
+        spellcheck="false"
+      />
+      <div class="muted" style="font-size: 11.5px; margin-top: 8px; line-height: 1.7">
+        保存时原文件会自动备份为 <span class="mono">*.bak</span>；「应用」在堆栈目录执行
+        <span class="mono">docker compose up -d --remove-orphans</span>，已从配置中移除的服务容器会被清理。
+      </div>
+      <pre v-if="composeLog" class="log-box" style="height: 200px; margin-top: 10px">{{ composeLog }}</pre>
+      <template #footer>
+        <el-button @click="composeVisible = false">关闭</el-button>
+        <el-button :disabled="composeBusy" @click="saveCompose(false)">仅保存</el-button>
+        <el-button type="primary" :loading="composeBusy" @click="saveCompose(true)">保存并应用</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Plus, Search, Download, WarningFilled } from '@element-plus/icons-vue'
+import { Refresh, Plus, Search, Download, WarningFilled, CaretRight, EditPen } from '@element-plus/icons-vue'
 import XTerm from '../components/XTerm.vue'
-import { api, errMsg, getToken, wsURL } from '../api'
+import { api, errMsg, getToken, hostQuery, wsURL } from '../api'
 import { fmtBytes, fmtTime, num, percentClass } from '../utils'
 
 const items = ref<any[]>([])
@@ -349,7 +411,8 @@ const volumes = ref<any[]>([])
 const loading = ref(false)
 const dockerErr = ref('')
 const q = ref('')
-const showAll = ref(true)
+// 容器状态筛选：all 全部 / running 运行中 / stopped 已停止（非 running 都算）
+const stateFilter = ref<'all' | 'running' | 'stopped'>('all')
 const tab = ref('containers')
 
 const drawer = ref(false)
@@ -412,6 +475,45 @@ function stateText(s: string) {
   return map[s] || s
 }
 
+// ---------- 退出码解释 ----------
+// 常见约定：0 正常；1 应用错误；125/126/127 与命令执行有关；
+// 128+信号编号 为信号退出（137=SIGKILL、143=SIGTERM 最常见）。
+const exitHint = computed<{ short: string; long: string } | null>(() => {
+  const st = inspect.value?.State
+  if (!st || st.Running || (st.ExitCode ?? null) === null) return null
+  const code = Number(st.ExitCode)
+  const known: Record<number, { short: string; long: string }> = {
+    0: { short: '正常退出', long: '退出码 0：容器内进程正常执行结束。' },
+    1: { short: '应用错误', long: '退出码 1：进程发生一般性错误退出，建议查看「日志」定位具体报错。' },
+    2: { short: '命令用法错误', long: '退出码 2：shell 内建命令或参数用法错误（bash 误用时返回）。' },
+    125: { short: '启动失败', long: '退出码 125：Docker 自身执行容器出错，常见于命令不存在、端口冲突或权限不足。' },
+    126: { short: '不可执行', long: '退出码 126：命令存在但没有执行权限（缺少 +x 或非可执行文件）。' },
+    127: { short: '命令未找到', long: '退出码 127：容器内找不到指定的命令或脚本路径，检查镜像内容器和启动命令拼写。' },
+    130: { short: 'Ctrl+C 中断', long: '退出码 130：进程收到 SIGINT（128+2）被中断，通常是交互式终端里按了 Ctrl+C。' },
+    137: {
+      short: st.OOMKilled ? '内存超限 (OOM)' : '被强制杀死',
+      long: st.OOMKilled
+        ? '退出码 137（128+9，SIGKILL）：容器内存用量超过限制被内核强制终止（OOMKilled），可调大内存限制或排查泄漏。'
+        : '退出码 137（128+9，SIGKILL）：进程被强制杀死，常见于 docker stop 等待超时后的强杀，或被系统 OOM / kill -9 终止。'
+    },
+    139: { short: '段错误崩溃', long: '退出码 139（128+11，SIGSEGV）：进程段错误崩溃，通常是应用程序自身的 bug。' },
+    143: { short: '正常停止 (SIGTERM)', long: '退出码 143（128+15，SIGTERM）：进程收到终止信号退出，docker stop / compose stop 的正常停止流程即为此码。' },
+    255: { short: '异常退出', long: '退出码 255：应用以越界退出码退出，常见于入口脚本执行失败或程序异常。' }
+  }
+  if (known[code]) return known[code]
+  if (code >= 128) {
+    const sig = code - 128
+    return {
+      short: `信号 ${sig} 退出`,
+      long: `退出码 ${code}（128+${sig}）：进程收到编号为 ${sig} 的信号被终止。`
+    }
+  }
+  return {
+    short: '自定义退出码',
+    long: `退出码 ${code}：由应用自行定义，具体含义需参考该程序的文档或日志。`
+  }
+})
+
 // 运行中的容器一定占用内存，所以 mem_usage 为 0 只可能是「没采集到」，
 // 这时显示「-」而不是 0，避免看起来像真的 0%。
 function statsKnown(row: any) {
@@ -436,6 +538,106 @@ const statsUnavailableReason = computed(() => {
   return '当前主机的被管端没有返回 CPU / 内存数据。常见原因：目标主机上的 Warden 版本与控制端不一致（需同为最新版），或该主机 Docker 的 stats 接口不可用。'
 })
 
+// ---------- 按 compose 堆栈分组 ----------
+
+// 状态筛选后的容器列表；「已停止」= 非 running（含 exited / created / dead / paused）
+const filteredItems = computed(() => {
+  if (stateFilter.value === 'running') return items.value.filter((r: any) => r.state === 'running')
+  if (stateFilter.value === 'stopped') return items.value.filter((r: any) => r.state !== 'running')
+  return items.value
+})
+
+const emptyText = computed(() =>
+  stateFilter.value === 'all' ? '没有容器，点击右上角「新建容器」创建' : '没有符合筛选条件的容器'
+)
+
+// 有 com.docker.compose.project 标签的容器归入对应堆栈，其余归入「独立容器」。
+// 堆栈在工作目录标签里带出文件位置，方便确认编辑的是哪份 compose 文件。
+const groupedList = computed(() => {
+  const map = new Map<string, any[]>()
+  for (const r of filteredItems.value) {
+    const key = r.project || ''
+    if (!map.has(key)) map.set(key, [])
+    map.get(key)!.push(r)
+  }
+  const stacks = [...map.entries()]
+    .filter(([k]) => k)
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([k, containers]) => ({
+      key: 's:' + k,
+      stack: k,
+      title: k,
+      dir: containers[0]?.labels?.['com.docker.compose.project.working_dir'] || '',
+      running: containers.filter((r: any) => r.state === 'running').length,
+      containers
+    }))
+  const loose = map.get('') || []
+  if (loose.length || stacks.length === 0) {
+    stacks.push({ key: 'loose', stack: '', title: '独立容器', dir: '', running: loose.filter((r: any) => r.state === 'running').length, containers: loose })
+  }
+  return stacks
+})
+
+const collapsedGroups = reactive<Record<string, boolean>>({})
+
+function toggleGroup(key: string) {
+  collapsedGroups[key] = !collapsedGroups[key]
+}
+
+// ---------- compose 编辑 ----------
+
+const composeVisible = ref(false)
+const composeProject = ref('')
+const composePath = ref('')
+const composeContent = ref('')
+const composeLog = ref('')
+const composeBusy = ref(false)
+
+async function openCompose(project: string) {
+  composeProject.value = project
+  composePath.value = ''
+  composeContent.value = ''
+  composeLog.value = ''
+  composeVisible.value = true
+  await loadCompose()
+}
+
+async function loadCompose() {
+  try {
+    const d = await api<any>('/api/compose/file', { query: { project: composeProject.value } })
+    composePath.value = d.path
+    composeContent.value = d.content
+  } catch (e) {
+    ElMessage.error(errMsg(e))
+  }
+}
+
+async function saveCompose(apply: boolean) {
+  if (composeBusy.value) return
+  composeBusy.value = true
+  try {
+    await api('/api/compose/file', {
+      method: 'PUT',
+      body: { project: composeProject.value, content: composeContent.value }
+    })
+    ElMessage.success('已保存')
+    if (!apply) return
+    composeLog.value = '正在应用配置（docker compose up -d），拉取镜像时可能较慢…\n'
+    const r = await api<any>('/api/compose/up', { method: 'POST', body: { project: composeProject.value } })
+    composeLog.value = (r.output || '').trim() || (r.ok ? '应用完成' : '应用失败')
+    if (r.ok) {
+      ElMessage.success('配置已应用')
+      await load()
+    } else {
+      ElMessage.error('应用失败，请查看输出日志')
+    }
+  } catch (e) {
+    ElMessage.error(errMsg(e))
+  } finally {
+    composeBusy.value = false
+  }
+}
+
 async function fetchList(silent: boolean) {
   // 采集资源占用本身有 1s 左右的耗时，轮询与手动刷新叠在一起会让请求排队
   if (silent && inflight) return
@@ -451,7 +653,8 @@ async function fetchList(silent: boolean) {
       return
     }
     // 列表本身只查容器，资源占用随后单独异步补齐，保证列表先出来
-    const res = await api<any>('/api/containers', { query: { all: showAll.value, q: q.value } })
+    // 状态筛选在前端做：已停止的容器只有 all=true 才拿得到，干脆统一取全量
+    const res = await api<any>('/api/containers', { query: { all: true, q: q.value } })
     const next: any[] = res.items || []
     // 刷新时沿用上一次的占用值，避免每次轮询都闪一下「-」
     const prev = new Map(items.value.map((r: any) => [r.id, r]))
@@ -508,7 +711,7 @@ function load() {
 
 // 资源占用是实时值，静默轮询刷新；弹层打开或切到其他标签页时暂停，避免打扰
 function refreshQuiet() {
-  if (tab.value !== 'containers' || drawer.value || createVisible.value || loading.value) return
+  if (tab.value !== 'containers' || drawer.value || createVisible.value || composeVisible.value || loading.value) return
   if (document.hidden) return
   fetchList(true)
 }
@@ -543,6 +746,8 @@ async function act(row: any, action: string) {
     if (current.value?.id === row.id) await loadDetail(row.id)
   } catch (e) {
     ElMessage.error(errMsg(e))
+    // 报错多半是列表过期（容器已被删除等），静默刷新掉过期行
+    fetchList(true)
   }
 }
 
@@ -557,12 +762,13 @@ async function remove(row: any) {
     return
   }
   try {
-    await api(`/api/containers/${row.id}?force=true`, { method: 'DELETE' })
+    await api(`/api/containers/${row.id}`, { method: 'DELETE', query: { force: true } })
     ElMessage.success('已删除')
     drawer.value = false
     await load()
   } catch (e) {
     ElMessage.error(errMsg(e))
+    fetchList(true)
   }
 }
 
@@ -669,7 +875,7 @@ async function doPull() {
   pulling.value = true
   pullLog.value = ''
   try {
-    const res = await fetch('/api/images/pull', {
+    const res = await fetch('/api/images/pull?' + hostQuery(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
       body: JSON.stringify({ image: pullRef.value })
@@ -712,7 +918,7 @@ async function removeImage(row: any) {
     return
   }
   try {
-    await api(`/api/images/${encodeURIComponent(row.id)}?force=true`, { method: 'DELETE' })
+    await api(`/api/images/${encodeURIComponent(row.id)}`, { method: 'DELETE', query: { force: true } })
     ElMessage.success('已删除')
     loadAll()
   } catch (e) {
@@ -737,6 +943,55 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.exit-hint {
+  margin-left: 6px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+  border-bottom: 1px dashed var(--ink-3);
+  cursor: help;
+}
+.stack-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: #f8fafd;
+  cursor: pointer;
+  user-select: none;
+}
+.stack-chevron {
+  color: var(--ink-3);
+  transition: transform 0.15s;
+}
+.stack-chevron.collapsed {
+  transform: rotate(0deg);
+}
+.stack-chevron:not(.collapsed) {
+  transform: rotate(90deg);
+}
+.stack-name {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--ink);
+}
+.stack-name.loose {
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.stack-dir {
+  font-size: 11px;
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.compose-editor :deep(textarea) {
+  font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  background: #fbfcfe;
+}
 .cell-metric {
   font-size: 12px;
   line-height: 1.35;

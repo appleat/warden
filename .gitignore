@@ -6,3 +6,4 @@ web/node_modules/
 *.exe
 *.log
 tmpdata/
+.workbuddy/

@@ -150,7 +150,7 @@ import {
   Folder,
   Document
 } from '@element-plus/icons-vue'
-import { api, errMsg, getToken } from '../api'
+import { api, errMsg, getHostId, getToken } from '../api'
 import { activeHostId } from '../hosts'
 import { fmtBytes, fmtTime } from '../utils'
 
@@ -161,15 +161,18 @@ const props = withDefaults(defineProps<{ compact?: boolean; startPath?: string; 
 })
 const emit = defineEmits<{ (e: 'path-change', v: string): void }>()
 
-// 远程模式（hostId>0）下把 SSH 主机 id 随请求带上，后端据此走 SFTP；
-// 本地模式不加任何 host 参数，避免被 HostProxy 转发到远程 Agent。
+// hostId>0：SSH 主机模式，带 ?id= 让后端走 SFTP；
+// hostId=0：跟随顶部「纳管主机」，带 ?host= 由 HostProxy 转发到对应 Agent
+// （本机则原样放行），文件列表展示的就是顶部所选主机的磁盘。
 function scope(q?: Record<string, any>, b?: any) {
-  if (!props.hostId) return { query: q, body: b }
-  return {
-    query: { ...(q || {}), id: props.hostId },
-    // 仅在调用方显式提供 body 时才附加 id；否则 body 非空会让 api() 把 GET 误判成 POST
-    body: b === undefined ? undefined : { ...b, id: props.hostId }
+  if (props.hostId) {
+    return {
+      query: { ...(q || {}), id: props.hostId },
+      // 仅在调用方显式提供 body 时才附加 id；否则 body 非空会让 api() 把 GET 误判成 POST
+      body: b === undefined ? undefined : { ...b, id: props.hostId }
+    }
   }
+  return { query: { ...(q || {}), host: getHostId() }, body: b }
 }
 
 const path = ref('')
@@ -279,8 +282,9 @@ function isArchive(name: string) {
 }
 
 async function download(row: any) {
-  const idq = props.hostId ? `id=${props.hostId}&` : ''
-  const url = `/api/files/download?${idq}path=${encodeURIComponent(row.path)}&token=${getToken()}`
+  // SSH 主机带 id=（SFTP），否则带 host= 跟随顶部所选主机
+  const hq = props.hostId ? `id=${props.hostId}` : `host=${getHostId()}`
+  const url = `/api/files/download?${hq}&path=${encodeURIComponent(row.path)}&token=${getToken()}`
   const a = document.createElement('a')
   a.href = url
   a.download = row.name
@@ -303,7 +307,8 @@ async function onFiles(e: Event) {
   uploadPct.value = 0
   await new Promise<void>((resolve) => {
     const xhr = new XMLHttpRequest()
-    xhr.open('POST', `/api/files/upload?${props.hostId ? 'id=' + props.hostId + '&' : ''}path=${encodeURIComponent(path.value)}`)
+    const hq = props.hostId ? `id=${props.hostId}` : `host=${getHostId()}`
+    xhr.open('POST', `/api/files/upload?${hq}&path=${encodeURIComponent(path.value)}`)
     xhr.setRequestHeader('Authorization', `Bearer ${getToken()}`)
     xhr.upload.onprogress = (ev) => {
       if (ev.lengthComputable) uploadPct.value = Math.round((ev.loaded / ev.total) * 100)

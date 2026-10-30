@@ -81,7 +81,7 @@
               <div class="file-panel-inner">
                 <div class="file-panel-head">
                   <span class="fp-title">文件管理</span>
-                  <el-tag size="small" effect="plain" :title="termMode === 'ssh' ? '文件操作跟随所选远程主机' : '文件操作跟随本机'">{{ fileHostLabel }}</el-tag>
+                  <el-tag size="small" effect="plain" :title="termMode === 'ssh' ? '文件操作跟随所选 SSH 主机' : '文件操作跟随顶部所选主机'">{{ fileHostLabel }}</el-tag>
                   <div class="spacer"></div>
                   <el-button link :icon="Close" title="收起" @click="filesOpen = false" />
                 </div>
@@ -147,6 +147,7 @@ import { Plus, Folder, Close } from '@element-plus/icons-vue'
 import XTerm from '../components/XTerm.vue'
 import FileBrowser from '../components/FileBrowser.vue'
 import { api, errMsg, wsURL } from '../api'
+import { activeHost } from '../hosts'
 
 const route = useRoute()
 const router = useRouter()
@@ -194,13 +195,13 @@ function resetTerm() {
   termKey.value++
 }
 
-// 文件面板标题：跟随当前终端选中的主机（本机 / 远程 SSH）
+// 文件面板标题：远程 SSH 跟随所选 SSH 主机；本机终端跟随顶部「纳管主机」切换
 const fileHostLabel = computed(() => {
   if (termMode.value === 'ssh' && termHost.value) {
     const h = hosts.value.find((x) => x.id === termHost.value)
     return h?.name || '远程主机'
   }
-  return '本机'
+  return activeHost.value?.name || '本机'
 })
 
 // ---------- 终端右侧文件面板 ----------

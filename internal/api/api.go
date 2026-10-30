@@ -116,6 +116,11 @@ func NewRouter(d *Deps) *gin.Engine {
 		ha.GET("/containers/:id/stats", d.containerStats)
 		ha.GET("/containers/:id/logs", d.containerLogs)
 
+		ha.GET("/compose/stacks", d.listComposeStacks)
+		ha.GET("/compose/file", d.getComposeFile)
+		ha.PUT("/compose/file", middleware.RequireRole(auth.RoleOperator), d.saveComposeFile)
+		ha.POST("/compose/up", middleware.RequireRole(auth.RoleOperator), d.composeUp)
+
 		ha.GET("/images", d.listImages)
 		ha.POST("/images/pull", middleware.RequireRole(auth.RoleOperator), d.pullImage)
 		ha.DELETE("/images/:id", middleware.RequireRole(auth.RoleOperator), d.removeImage)

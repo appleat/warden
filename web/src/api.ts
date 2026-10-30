@@ -23,6 +23,7 @@ const HOST_SCOPED = [
   '/api/dashboard',
   '/api/docker',
   '/api/containers',
+  '/api/compose',
   '/api/images',
   '/api/volumes',
   '/api/networks',
@@ -30,9 +31,9 @@ const HOST_SCOPED = [
   '/api/redis',
   '/api/system/'
 ]
-// 注意：/api/files 故意不放进 HOST_SCOPED。文件管理后端按请求里的 ?id=（SSH 主机）
-// 在本地磁盘与远程 SFTP 间切换，而非跟随顶部「纳管主机」；若自动附加 host 会被
-// HostProxy 转发到远程 Agent，反而取不到文件。
+// 注意：/api/files 不放进 HOST_SCOPED，由 FileBrowser 自己决定路由参数：
+// SSH 主机模式带 ?id=（后端走 SFTP），其余场景带 ?host= 跟随顶部「纳管主机」。
+// 若放进 HOST_SCOPED 会和 ?id= 叠加，导致 SSH 主机文件请求被二次转发而出错。
 
 export function getHostId(): number {
   const v = Number(localStorage.getItem(HOST_KEY) || 1)
@@ -89,8 +90,7 @@ function buildQuery(q?: Record<string, any>) {
     if (v === undefined || v === null || v === '') return
     p.append(k, String(v))
   })
-  const s = p.toString()
-  return s ? `?${s}` : ''
+  return p.toString()
 }
 
 export async function api<T = any>(path: string, opts: ReqOpts = {}): Promise<T> {
@@ -112,7 +112,11 @@ export async function api<T = any>(path: string, opts: ReqOpts = {}): Promise<T>
     query = { ...(opts.query || {}), host: getHostId() }
   }
 
-  const res = await fetch(path + buildQuery(query), {
+  // 路径里可能已手写 ?a=b（如下载链接），此时追加参数要用 & 而不是再来一个 ?
+  const qs = buildQuery(query)
+  const url = qs ? (path.includes('?') ? `${path}&${qs}` : `${path}?${qs}`) : path
+
+  const res = await fetch(url, {
     method: opts.method || (body ? 'POST' : 'GET'),
     headers,
     body,

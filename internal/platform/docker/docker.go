@@ -15,6 +15,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/go-connections/nat"
 )
 
@@ -220,12 +221,24 @@ func (s *Service) Inspect(ctx context.Context, id string) (json.RawMessage, erro
 	return json.RawMessage(b), nil
 }
 
+// wrapActionErr 统一处理容器操作报错。容器已不存在时（列表过期、被 compose
+// 清理、在别处删除）把 daemon 的 "No such container" 换成可理解的提示。
+func wrapActionErr(id string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if errdefs.IsNotFound(err) {
+		return fmt.Errorf("容器 %s 不存在或已被删除，列表将自动刷新", shortID(id))
+	}
+	return err
+}
+
 func (s *Service) Start(ctx context.Context, id string) error {
 	cli, err := s.Client()
 	if err != nil {
 		return err
 	}
-	return cli.ContainerStart(ctx, id, container.StartOptions{})
+	return wrapActionErr(id, cli.ContainerStart(ctx, id, container.StartOptions{}))
 }
 
 func (s *Service) Stop(ctx context.Context, id string) error {
@@ -233,7 +246,7 @@ func (s *Service) Stop(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	return cli.ContainerStop(ctx, id, container.StopOptions{Timeout: ptr(10)})
+	return wrapActionErr(id, cli.ContainerStop(ctx, id, container.StopOptions{Timeout: ptr(10)}))
 }
 
 func (s *Service) Restart(ctx context.Context, id string) error {
@@ -241,7 +254,7 @@ func (s *Service) Restart(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	return cli.ContainerRestart(ctx, id, container.StopOptions{Timeout: ptr(10)})
+	return wrapActionErr(id, cli.ContainerRestart(ctx, id, container.StopOptions{Timeout: ptr(10)}))
 }
 
 func (s *Service) Pause(ctx context.Context, id string) error {
@@ -249,7 +262,7 @@ func (s *Service) Pause(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	return cli.ContainerPause(ctx, id)
+	return wrapActionErr(id, cli.ContainerPause(ctx, id))
 }
 
 func (s *Service) Unpause(ctx context.Context, id string) error {
@@ -257,7 +270,7 @@ func (s *Service) Unpause(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	return cli.ContainerUnpause(ctx, id)
+	return wrapActionErr(id, cli.ContainerUnpause(ctx, id))
 }
 
 func (s *Service) Remove(ctx context.Context, id string, force bool) error {
@@ -265,7 +278,13 @@ func (s *Service) Remove(ctx context.Context, id string, force bool) error {
 	if err != nil {
 		return err
 	}
-	return cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: force, RemoveVolumes: false})
+	err = cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: force, RemoveVolumes: false})
+	if errdefs.IsNotFound(err) {
+		// 容器已经不在了（过期列表、compose --remove-orphans 清理、自动移除），
+		// 删除按幂等处理，直接视为成功，避免用户看到无意义的报错。
+		return nil
+	}
+	return err
 }
 
 type PortSpec struct {
