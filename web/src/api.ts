@@ -29,6 +29,7 @@ const HOST_SCOPED = [
   '/api/networks',
   '/api/nacos',
   '/api/redis',
+  '/api/mysql',
   '/api/system/'
 ]
 // 注意：/api/files 不放进 HOST_SCOPED，由 FileBrowser 自己决定路由参数：

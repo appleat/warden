@@ -143,10 +143,13 @@ func (i *Info) TotalKeys() int64 {
 // ---------- 键列表 ----------
 
 type KeyItem struct {
-	Key  string `json:"key"`
-	Type string `json:"type"`
-	TTL  int64  `json:"ttl"`  // -1 永不过期，-2 已不存在
-	Size int64  `json:"size"` // 字节，-1 表示无法获取
+	Key string `json:"key"` // 展示名，二进制键已转义（见 KeyDisplay）
+	// KeyRaw 是原始键名的 base64，仅在键名含二进制字节时出现。
+	// 前端操作（查详情、改 TTL、删除）要用它，不能用转义后的 Key。
+	KeyRaw string `json:"key_raw,omitempty"`
+	Type   string `json:"type"`
+	TTL    int64  `json:"ttl"`  // -1 永不过期，-2 已不存在
+	Size   int64  `json:"size"` // 字节，-1 表示无法获取
 }
 
 type KeyPage struct {
@@ -251,7 +254,7 @@ func enrichKeys(ctx context.Context, c *Conn, keys []string) []KeyItem {
 	res, err := c.Pipeline(ctx, cmds)
 	items := make([]KeyItem, 0, len(keys))
 	for i, k := range keys {
-		it := KeyItem{Key: k, Type: "unknown", TTL: -1, Size: -1}
+		it := KeyItem{Key: KeyDisplay(k), KeyRaw: KeyRaw(k), Type: "unknown", TTL: -1, Size: -1}
 		if err == nil {
 			if base := i * 3; base+2 < len(res) {
 				if s, ok := res[base].(string); ok {
@@ -281,6 +284,7 @@ type Pair struct {
 // string → string；hash/zset → []Pair；list/set → []string；stream → []string。
 type KeyDetail struct {
 	Key       string `json:"key"`
+	KeyRaw    string `json:"key_raw,omitempty"` // 二进制键名的原始字节（base64）
 	Type      string `json:"type"`
 	TTL       int64  `json:"ttl"`
 	Size      int64  `json:"size"`
@@ -305,7 +309,7 @@ func GetKey(ctx context.Context, c *Conn, key string) (*KeyDetail, error) {
 	if typ == "" || typ == "none" {
 		return nil, ErrNotExist
 	}
-	d := &KeyDetail{Key: key, Type: typ, TTL: -1, Size: -1}
+	d := &KeyDetail{Key: KeyDisplay(key), KeyRaw: KeyRaw(key), Type: typ, TTL: -1, Size: -1}
 	if n, err := c.Int(ctx, "TTL", key); err == nil {
 		d.TTL = n
 	}

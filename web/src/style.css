@@ -490,3 +490,39 @@ a {
   color: var(--ink-3);
   font-size: 12.5px;
 }
+
+/* 左右分栏的拖动条：占 grid 的一列（宽度由 SPLIT_BAR_WIDTH 决定），
+   默认一条浅线，悬停/拖动时变粗变蓝，避免"面板之间有一条看不见的缝" */
+.split-bar {
+  position: relative;
+  cursor: col-resize;
+  touch-action: none;
+  border-radius: 4px;
+}
+
+.split-bar::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--line);
+  border-radius: 1px;
+  transition:
+    width 0.12s ease,
+    background 0.12s ease;
+}
+
+.split-bar:hover::before,
+.split-bar.is-dragging::before {
+  width: 2px;
+  background: var(--brand);
+}
+
+/* 分栏里的两栏都是 grid item，默认 min-width:auto 会被内容撑破列宽，
+   拖窄后整块面板不跟着收。这里统一压成 0，让内部滚动容器接管 */
+.split > .card {
+  min-width: 0;
+}

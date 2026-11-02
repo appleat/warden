@@ -139,6 +139,25 @@ func NewAgentRouter(d *Deps, token string) *gin.Engine {
 			api.DELETE("/redis/key", d.redisDeleteKey)
 			api.POST("/redis/key/ttl", d.redisExpireKey)
 			api.POST("/redis/command", d.redisCommand)
+
+			// MySQL：连接参数由控制端下发，Agent 不落库
+			api.GET("/mysql/overview", d.mysqlOverview)
+			api.GET("/mysql/databases", d.mysqlDatabases)
+			api.GET("/mysql/tables", d.mysqlTables)
+			api.GET("/mysql/table", d.mysqlTable)
+			api.GET("/mysql/rows", d.mysqlRows)
+			api.GET("/mysql/processes", d.mysqlSessions)
+			api.GET("/mysql/variables", d.mysqlVariables)
+			api.GET("/mysql/slow", d.mysqlSlow)
+			api.POST("/mysql/query", d.mysqlQuery)
+			api.POST("/mysql/processes/kill", d.mysqlKillSession)
+			api.POST("/mysql/export", d.mysqlExport)
+			api.POST("/mysql/import", d.mysqlImport)
+			api.POST("/mysql/table/create", d.mysqlCreateTable)
+			api.POST("/mysql/table/alter", d.mysqlAlterTable)
+			api.POST("/mysql/column/alter", d.mysqlAlterColumn)
+			api.POST("/mysql/row/update", d.mysqlUpdateRow)
+			api.POST("/mysql/slow/explain", d.mysqlSlowExplain)
 		}
 
 		ws := a.Group("/ws")

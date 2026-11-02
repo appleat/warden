@@ -138,6 +138,27 @@ type RedisConf struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// MySQLConf 是某台主机上 MySQL 的连接配置（控制端保存，按主机隔离）。
+// Password 加密落库，接口里不返回明文。ReadOnly 打开时面板只允许查询类 SQL。
+type MySQLConf struct {
+	ID       uint   `gorm:"primarykey" json:"id"`
+	HostID   uint   `gorm:"uniqueIndex;not null" json:"host_id"`
+	Host     string `gorm:"size:255" json:"host"` // 数据库地址，可与所在主机不同
+	Port     int    `gorm:"default:3306" json:"port"`
+	Username string `gorm:"size:128" json:"username"`
+	Password string `gorm:"type:text" json:"-"`
+	Database string `gorm:"size:128" json:"database"`
+	Charset  string `gorm:"size:32" json:"charset"`
+	TLS      bool   `gorm:"default:false" json:"tls"`
+	Insecure bool   `gorm:"default:false" json:"insecure"`
+	// 这里刻意不加 gorm:"default:true"：GORM 对带默认值的字段在插入时会省略零值，
+	// 导致「首次保存时显式选了可写」被数据库默认值改回只读。
+	// 「新建连接默认只读」由 handler 负责设置。
+	ReadOnly  bool      `json:"read_only"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // ---------- 存储 ----------
 
 type Store struct {
@@ -171,7 +192,7 @@ func Open(path string) (*Store, error) {
 func (s *Store) migrate() error {
 	return s.DB.AutoMigrate(
 		&User{}, &AuditLog{}, &Monitor{}, &MonitorResult{}, &SSHHost{}, &Setting{}, &Host{},
-		&NacosConf{}, &RedisConf{},
+		&NacosConf{}, &RedisConf{}, &MySQLConf{},
 	)
 }
 

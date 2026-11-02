@@ -46,181 +46,270 @@
           <el-button :icon="Refresh" :loading="statusLoading" @click="reloadAll">刷新</el-button>
           <el-button :icon="Setting" @click="openConn">连接设置</el-button>
         </div>
-
-        <div v-if="status.online" class="grid" style="grid-template-columns: repeat(5, 1fr); margin-top: 14px">
-          <div class="metric">
-            <div class="metric-head"><span>内存占用</span></div>
-            <div class="metric-value" style="font-size: 20px">{{ status.memory_used_human || '-' }}</div>
-            <div class="metric-foot">
-              峰值 {{ status.memory_peak_human || '-' }}
-              <span v-if="status.maxmemory"> · 上限 {{ fmtSize(status.maxmemory) }}</span>
-              <span v-else> · 未限制</span>
-            </div>
-          </div>
-          <div class="metric">
-            <div class="metric-head"><span>当前库键数</span></div>
-            <div class="metric-value">{{ fmtNum(status.keys) }}</div>
-            <div class="metric-foot">
-              db{{ db }} · 其中 {{ fmtNum(status.expires) }} 个带过期；全库 {{ fmtNum(status.total_keys) }}
-            </div>
-          </div>
-          <div class="metric">
-            <div class="metric-head"><span>客户端</span></div>
-            <div class="metric-value">{{ fmtNum(status.clients) }}</div>
-            <div class="metric-foot">
-              阻塞 {{ fmtNum(status.blocked_clients) }} · 拒绝连接 {{ fmtNum(status.rejected) }}
-            </div>
-          </div>
-          <div class="metric">
-            <div class="metric-head"><span>每秒命令</span></div>
-            <div class="metric-value">{{ fmtNum(status.ops) }}</div>
-            <div class="metric-foot">累计 {{ fmtNum(status.total_commands) }} 条</div>
-          </div>
-          <div class="metric">
-            <div class="metric-head">
-              <span>命中率</span>
-              <span class="muted" style="font-size: 11px">命中/未命中</span>
-            </div>
-            <div class="metric-value">{{ status.hit_rate !== undefined ? status.hit_rate.toFixed(1) + '%' : '-' }}</div>
-            <div class="metric-foot">
-              {{ fmtNum(status.hits) }} / {{ fmtNum(status.misses) }}
-              <span v-if="status.evicted"> · 淘汰 {{ fmtNum(status.evicted) }}</span>
-            </div>
-          </div>
-        </div>
       </div>
 
       <el-tabs v-model="tab" style="margin-top: 4px">
         <!-- 键浏览 -->
         <el-tab-pane label="键浏览" name="keys">
-          <div class="card" style="padding: 0">
-            <div class="toolbar" style="padding: 12px 14px 0; margin-bottom: 8px; flex-wrap: wrap; gap: 8px">
-              <el-input
-                v-model="pattern"
-                placeholder="模糊匹配子串，或 * ? 通配符，例如 user"
-                clearable
-                style="width: 250px"
-                @keyup.enter="loadKeys(true)"
-                @clear="loadKeys(true)"
-              >
-                <template #prefix><el-icon><Search /></el-icon></template>
-              </el-input>
-              <el-select v-model="typeFilter" style="width: 128px" @change="loadKeys(true)">
-                <el-option label="全部类型" value="" />
-                <el-option v-for="t in keyTypes" :key="t" :label="t" :value="t" />
-              </el-select>
-              <el-button size="small" @click="loadKeys(true)">查询</el-button>
+          <div class="split" :style="splitStyle" ref="splitEl">
+            <!-- 左：键名树 -->
+            <div class="card side" style="padding: 0">
+              <div class="side-head">
+                <span class="card-title">键名</span>
+                <div class="spacer"></div>
+                <span class="muted" style="font-size: 11.5px">匹配 {{ fmtNum(matched) }}</span>
+                <el-button size="small" text :icon="Refresh" :loading="keysLoading" @click="loadKeys()" />
+                <el-button type="primary" size="small" :icon="Plus" @click="openNewKey">新建</el-button>
+              </div>
 
-              <el-radio-group v-model="keyView" size="small" style="margin-left: 2px">
-                <el-radio-button label="list">列表</el-radio-button>
-                <el-radio-button label="tree">树形</el-radio-button>
-              </el-radio-group>
+              <div style="padding: 8px 10px 0">
+                <el-input
+                  v-model="pattern"
+                  size="small"
+                  placeholder="模糊匹配子串，或 * ? 通配符"
+                  clearable
+                  @keyup.enter="loadKeys(true)"
+                  @clear="loadKeys(true)"
+                >
+                  <template #prefix><el-icon><Search /></el-icon></template>
+                </el-input>
+              </div>
 
-              <template v-if="keyView === 'tree'">
-                <span class="muted" style="font-size: 12px">分隔符</span>
-                <el-input v-model="separator" style="width: 86px" maxlength="8" />
-              </template>
+              <div class="row" style="padding: 8px 10px 0; gap: 6px; align-items: center">
+                <el-select
+                  v-model="typeFilter"
+                  size="small"
+                  style="width: 112px"
+                  placeholder="全部类型"
+                  @change="loadKeys(true)"
+                >
+                  <el-option label="全部类型" value="" />
+                  <el-option v-for="t in keyTypes" :key="t" :label="t" :value="t" />
+                </el-select>
+                <span class="muted" style="font-size: 11.5px; flex: none">分隔符</span>
+                <el-input
+                  v-model="separator"
+                  size="small"
+                  style="width: 66px"
+                  maxlength="8"
+                  placeholder="不分层"
+                  class="sep-input"
+                />
+              </div>
 
-              <div class="spacer"></div>
-              <span class="muted" style="font-size: 12px">
-                匹配 <b>{{ fmtNum(matched) }}</b> / 库共 {{ fmtNum(keysTotal) }} 个键
-              </span>
-              <el-button size="small" :icon="Refresh" @click="loadKeys()" />
-              <el-button type="primary" size="small" :icon="Plus" @click="openNewKey">新建键</el-button>
+              <div class="row" style="padding: 4px 10px 2px; gap: 2px; align-items: center">
+                <el-button link size="small" @click="expandAll">展开全部</el-button>
+                <el-button link size="small" @click="collapseAll">折叠全部</el-button>
+                <div class="spacer"></div>
+                <span class="muted" style="font-size: 11px">
+                  库内共 {{ fmtNum(keysTotal) }} 个键
+                </span>
+              </div>
+
+              <el-scrollbar height="calc(100vh - 424px)">
+                <el-tree
+                  v-if="treeData.length"
+                  ref="treeRef"
+                  :data="treeData"
+                  node-key="path"
+                  :props="{ label: 'label', children: 'children' }"
+                  :expand-on-click-node="true"
+                  highlight-current
+                  :empty-text="keysLoading ? '加载中…' : '没有匹配的键'"
+                  style="padding: 2px 8px 8px 4px"
+                  @node-click="onTreeClick"
+                  @node-expand="onNodeExpand"
+                  @node-collapse="onNodeCollapse"
+                >
+                  <template #default="{ data }">
+                    <div class="tree-row">
+                      <el-icon :size="13" class="db-ico">
+                        <Folder v-if="data.children.length" />
+                        <Document v-else />
+                      </el-icon>
+                      <span
+                        class="mono db-name"
+                        :class="{ 'key-link': data.key && !data.children.length }"
+                        :title="data.key || data.path"
+                      >{{ data.label }}</span>
+                      <el-tag
+                        v-if="data.type && !data.children.length"
+                        size="small"
+                        effect="plain"
+                        class="type-tag"
+                        :type="typeTag(data.type)"
+                      >{{ data.type }}</el-tag>
+                      <div class="spacer"></div>
+                      <span v-if="data.children.length" class="muted tree-meta">{{ leafCount(data) }}</span>
+                    </div>
+                  </template>
+                </el-tree>
+                <div v-else-if="!keysLoading" class="empty-hint" style="padding: 24px 14px">
+                  没有匹配的键
+                </div>
+              </el-scrollbar>
+
+              <div v-if="truncated" class="muted" style="font-size: 11.5px; padding: 6px 12px 8px">
+                结果过多，仅显示前 {{ fmtNum(matched) }} 个键，请缩小查找范围
+              </div>
             </div>
 
-            <!-- 列表视图 -->
-            <template v-if="keyView === 'list'">
-              <el-table
-                :data="pagedKeys"
-                v-loading="keysLoading"
-                size="small"
-                max-height="calc(100vh - 470px)"
-                empty-text="没有匹配的键"
-              >
-                <el-table-column label="键名" min-width="260">
-                  <template #default="{ row }">
-                    <span class="mono key-link" style="font-size: 12.5px" @click="openKey(row.key)">
-                      {{ row.key }}
-                    </span>
-                  </template>
-                </el-table-column>
-                <el-table-column label="类型" width="100">
-                  <template #default="{ row }">
-                    <el-tag size="small" effect="plain" :type="typeTag(row.type)">{{ row.type }}</el-tag>
-                  </template>
-                </el-table-column>
-                <el-table-column label="过期时间" width="150">
-                  <template #default="{ row }">
-                    <span :class="row.ttl === -1 ? 'muted' : ''">{{ fmtTTL(row.ttl) }}</span>
-                  </template>
-                </el-table-column>
-                <el-table-column label="内存占用" width="110" align="right">
-                  <template #default="{ row }"><span class="mono">{{ fmtSize(row.size) }}</span></template>
-                </el-table-column>
-                <el-table-column label="操作" width="140" align="right">
-                  <template #default="{ row }">
-                    <el-button link type="primary" size="small" @click="openKey(row.key)">查看</el-button>
-                    <el-button link type="danger" size="small" @click="removeKey(row.key)">删除</el-button>
-                  </template>
-                </el-table-column>
-              </el-table>
-              <div class="row" style="padding: 8px 12px; justify-content: flex-end">
-                <span class="muted" style="font-size: 12px">
-                  第 {{ listPage }} / {{ listPages }} 页 · 共 {{ fmtNum(keys.length) }} 个
-                </span>
-                <el-button size="small" :disabled="listPage <= 1" @click="listPage--">上一页</el-button>
-                <el-button size="small" :disabled="listPage >= listPages" @click="listPage++">下一页</el-button>
-              </div>
-            </template>
+            <div
+              class="split-bar"
+              :class="{ 'is-dragging': splitDragging }"
+              title="拖动调整宽度，双击恢复默认"
+              @pointerdown="onSplitDown"
+              @dblclick="resetSplitWidth"
+            ></div>
 
-            <!-- 树形视图：按分隔符把键名分层 -->
-            <template v-else>
-              <div v-if="treeData.length" class="row" style="padding: 8px 14px; gap: 8px">
-                <el-button size="small" @click="expandAll">展开全部</el-button>
-                <el-button size="small" @click="collapseAll">折叠全部</el-button>
-                <span class="muted" style="font-size: 12px">
-                  按「<code class="mono">{{ separator || '(无)' }}</code>」分层 · 点击叶子查看键
-                </span>
+            <!-- 右：键详情（内嵌，不再弹抽屉） -->
+            <div class="card" style="padding: 0; min-width: 0">
+              <div v-if="!selectedKey" class="empty-hint" style="padding: 80px 20px">
+                在左侧点击一个键，这里会显示它的类型、过期时间、内存占用与内容预览
               </div>
-              <el-tree
-                v-if="treeData.length"
-                ref="treeRef"
-                :data="treeData"
-                node-key="path"
-                :props="{ label: 'label', children: 'children' }"
-                :expand-on-click-node="true"
-                :default-expanded-keys="expandedKeys"
-                v-loading="keysLoading"
-                style="padding: 4px 14px 12px; max-height: calc(100vh - 470px); overflow: auto"
-              >
-                <template #default="{ node, data }">
-                  <div class="tree-node">
-                    <template v-if="data.children.length">
-                      <el-icon class="t-ico"><Folder /></el-icon>
-                      <span class="t-label">{{ data.label }}</span>
-                      <span class="muted t-count">{{ leafCount(data) }} 个键</span>
-                      <span v-if="data.key" class="t-self-tag">本身也是键</span>
-                    </template>
-                    <template v-else>
-                      <el-icon class="t-ico"><Document /></el-icon>
-                      <span class="mono key-link" @click.stop="openKey(data.key)">{{ data.key }}</span>
-                      <el-tag size="small" effect="plain" :type="typeTag(data.type)">{{ data.type }}</el-tag>
-                      <span class="muted" style="font-size: 12px">{{ fmtTTL(data.ttl) }}</span>
-                      <span class="mono muted" style="font-size: 12px">{{ fmtSize(data.size) }}</span>
-                    </template>
-                    <span class="tree-actions">
-                      <el-button v-if="data.key" link type="primary" size="small" @click.stop="openKey(data.key)">查看</el-button>
-                      <el-button v-if="data.key" link type="danger" size="small" @click.stop="removeKey(data.key)">删除</el-button>
+              <div v-else v-loading="detailLoading">
+                <div class="side-head">
+                  <span class="card-title mono" style="word-break: break-all">{{ selectedKey }}</span>
+                  <el-tag v-if="detail?.type" size="small" effect="plain" :type="typeTag(detail.type)">
+                    {{ detail.type }}
+                  </el-tag>
+                  <!-- 二进制键名（如 Java 序列化）在页面上只能转义显示，加个标记免得用户以为键名本身长这样 -->
+                  <el-tag
+                    v-if="detail?.key_raw"
+                    size="small"
+                    effect="plain"
+                    type="info"
+                    title="键名含非文本字节，这里以 \xNN 转义显示；查看、改过期、删除都按原始字节执行"
+                  >二进制键名</el-tag>
+                  <div class="spacer"></div>
+                  <el-button v-if="detail?.type === 'string'" size="small" @click="openEditKey">编辑内容</el-button>
+                  <el-button v-if="detail" size="small" @click="openTTL">修改过期</el-button>
+                  <el-button v-if="detail" size="small" type="danger" plain @click="removeKey(selectedKey, selectedKeyRaw, true)">
+                    删除
+                  </el-button>
+                  <el-button size="small" :icon="Refresh" @click="openKey(selectedKey, selectedKeyRaw)" />
+                </div>
+
+                <div v-if="detail" style="padding: 12px 14px 0">
+                  <el-descriptions :column="4" border size="small">
+                    <el-descriptions-item label="过期时间">{{ fmtTTL(detail.ttl) }}</el-descriptions-item>
+                    <el-descriptions-item label="元素数量">{{ fmtNum(detail.length) }}</el-descriptions-item>
+                    <el-descriptions-item label="内存占用">{{ fmtSize(detail.size) }}</el-descriptions-item>
+                    <el-descriptions-item label="编码">{{ detail.encoding || '-' }}</el-descriptions-item>
+                  </el-descriptions>
+
+                  <div class="card-title" style="margin: 14px 0 8px; gap: 8px">
+                    <span>内容预览</span>
+                    <span v-if="detail.truncated" class="muted" style="font-size: 11.5px">
+                      数据较多，仅展示前 100 条
                     </span>
+                    <div class="spacer"></div>
+                    <el-button
+                      v-if="detail.type === 'string' && detail.preview"
+                      size="small"
+                      @click="copyValue()"
+                    >复制内容</el-button>
                   </div>
-                </template>
-              </el-tree>
-              <div v-else-if="!keysLoading" class="empty-hint" style="padding: 24px">没有匹配的键</div>
-            </template>
 
-            <div v-if="truncated" class="muted" style="font-size: 12px; padding: 0 14px 10px">
-              结果过多，仅显示前 {{ fmtNum(matched) }} 条；请缩小查找范围以查看完整列表。
+                  <!-- 字符串 -->
+                  <pre v-if="detail.type === 'string'" class="preview mono">{{ detail.preview || '(空字符串)' }}</pre>
+
+                  <!-- hash / zset -->
+                  <el-table
+                    v-else-if="detail.type === 'hash' || detail.type === 'zset'"
+                    :data="detail.preview || []"
+                    size="small"
+                    border
+                    max-height="calc(100vh - 520px)"
+                    empty-text="没有字段"
+                  >
+                    <el-table-column :label="detail.type === 'zset' ? '成员' : '字段'" min-width="220">
+                      <template #default="{ row }"><span class="mono">{{ row.field }}</span></template>
+                    </el-table-column>
+                    <el-table-column :label="detail.type === 'zset' ? '分值' : '值'" min-width="260">
+                      <template #default="{ row }"><span class="mono">{{ row.value }}</span></template>
+                    </el-table-column>
+                  </el-table>
+
+                  <!-- list / set / stream -->
+                  <div v-else-if="Array.isArray(detail.preview)" class="list-preview">
+                    <div v-for="(v, i) in detail.preview" :key="i" class="list-item mono">
+                      <span class="muted" style="width: 40px; flex: none">{{ i + 1 }}</span>
+                      <span style="word-break: break-all">{{ v }}</span>
+                    </div>
+                    <div v-if="!detail.preview.length" class="empty-hint">没有元素</div>
+                  </div>
+
+                  <div v-else class="empty-hint">该类型暂不支持内容预览，请使用命令台查看</div>
+                </div>
+
+                <div v-else-if="!detailLoading" class="empty-hint" style="padding: 40px">
+                  没有取到该键的内容，可能已被删除
+                </div>
+              </div>
+            </div>
+          </div>
+        </el-tab-pane>
+
+        <!-- 运行指标 -->
+        <el-tab-pane label="运行指标" name="metrics">
+          <div class="card">
+            <div class="row" style="margin-bottom: 14px">
+              <span class="muted" style="font-size: 12px">
+                数值来自 INFO，与刷新时刻一致；当前库 db{{ db }}
+              </span>
+              <div class="spacer"></div>
+              <el-button size="small" :icon="Refresh" :loading="statusLoading" @click="loadStatus">刷新</el-button>
+            </div>
+            <div
+              v-if="status.online"
+              class="grid"
+              style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr))"
+            >
+              <div class="metric">
+                <div class="metric-head"><span>内存占用</span></div>
+                <div class="metric-value" style="font-size: 20px">{{ status.memory_used_human || '-' }}</div>
+                <div class="metric-foot">
+                  峰值 {{ status.memory_peak_human || '-' }}
+                  <span v-if="status.maxmemory"> · 上限 {{ fmtSize(status.maxmemory) }}</span>
+                  <span v-else> · 未限制</span>
+                </div>
+              </div>
+              <div class="metric">
+                <div class="metric-head"><span>当前库键数</span></div>
+                <div class="metric-value">{{ fmtNum(status.keys) }}</div>
+                <div class="metric-foot">
+                  db{{ db }} · 其中 {{ fmtNum(status.expires) }} 个带过期；全库 {{ fmtNum(status.total_keys) }}
+                </div>
+              </div>
+              <div class="metric">
+                <div class="metric-head"><span>客户端</span></div>
+                <div class="metric-value">{{ fmtNum(status.clients) }}</div>
+                <div class="metric-foot">
+                  阻塞 {{ fmtNum(status.blocked_clients) }} · 拒绝连接 {{ fmtNum(status.rejected) }}
+                </div>
+              </div>
+              <div class="metric">
+                <div class="metric-head"><span>每秒命令</span></div>
+                <div class="metric-value">{{ fmtNum(status.ops) }}</div>
+                <div class="metric-foot">累计 {{ fmtNum(status.total_commands) }} 条</div>
+              </div>
+              <div class="metric">
+                <div class="metric-head">
+                  <span>命中率</span>
+                  <span class="muted" style="font-size: 11px">命中/未命中</span>
+                </div>
+                <div class="metric-value">
+                  {{ status.hit_rate !== undefined ? status.hit_rate.toFixed(1) + '%' : '-' }}
+                </div>
+                <div class="metric-foot">
+                  {{ fmtNum(status.hits) }} / {{ fmtNum(status.misses) }}
+                  <span v-if="status.evicted"> · 淘汰 {{ fmtNum(status.evicted) }}</span>
+                </div>
+              </div>
+            </div>
+            <div v-else class="empty-hint" style="padding: 30px">
+              {{ status.error || '暂时拿不到运行指标，请检查连接是否正常' }}
             </div>
           </div>
         </el-tab-pane>
@@ -351,69 +440,6 @@
       </template>
     </el-dialog>
 
-    <!-- 键详情 -->
-    <el-drawer v-model="detailVisible" :title="detail?.key || '键详情'" size="620px">
-      <div v-if="detailLoading" v-loading="true" style="height: 200px"></div>
-      <template v-else-if="detail">
-        <el-descriptions :column="2" border size="small">          <el-descriptions-item label="类型">
-            <el-tag size="small" effect="plain" :type="typeTag(detail.type)">{{ detail.type }}</el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item label="过期时间">{{ fmtTTL(detail.ttl) }}</el-descriptions-item>
-          <el-descriptions-item label="元素数量">{{ fmtNum(detail.length) }}</el-descriptions-item>
-          <el-descriptions-item label="内存占用">{{ fmtSize(detail.size) }}</el-descriptions-item>
-          <el-descriptions-item label="编码">{{ detail.encoding || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="所在库">db{{ db }}</el-descriptions-item>
-        </el-descriptions>
-
-        <div class="card-title" style="margin: 18px 0 8px">
-          <span>内容预览</span>
-          <span v-if="detail.truncated" class="muted" style="font-size: 11.5px">
-            数据较多，仅展示前 100 条
-          </span>
-        </div>
-
-        <!-- 字符串 -->
-        <pre v-if="detail.type === 'string'" class="preview mono">{{ detail.preview || '(空字符串)' }}</pre>
-
-        <!-- hash / zset -->
-        <el-table
-          v-else-if="detail.type === 'hash' || detail.type === 'zset'"
-          :data="detail.preview || []"
-          size="small"
-          max-height="380"
-          empty-text="没有字段"
-        >
-          <el-table-column :label="detail.type === 'zset' ? '成员' : '字段'" min-width="200">
-            <template #default="{ row }"><span class="mono">{{ row.field }}</span></template>
-          </el-table-column>
-          <el-table-column :label="detail.type === 'zset' ? '分值' : '值'" min-width="240">
-            <template #default="{ row }"><span class="mono">{{ row.value }}</span></template>
-          </el-table-column>
-        </el-table>
-
-        <!-- list / set / stream -->
-        <div v-else-if="Array.isArray(detail.preview)" class="list-preview">
-          <div v-for="(v, i) in detail.preview" :key="i" class="list-item mono">
-            <span class="muted" style="width: 34px; flex: none">{{ i + 1 }}</span>
-            <span style="word-break: break-all">{{ v }}</span>
-          </div>
-          <div v-if="!detail.preview.length" class="empty-hint">没有元素</div>
-        </div>
-
-        <div v-else class="empty-hint">该类型暂不支持内容预览，请使用命令台查看</div>
-      </template>
-
-      <!-- 底部操作独立成槽，data 为空时整体隐藏 -->
-      <template #footer>
-        <div v-if="detail" class="row" style="width: 100%">
-          <el-button v-if="detail.type === 'string'" @click="openEditKey">编辑内容</el-button>
-          <el-button @click="openTTL">修改过期时间</el-button>
-          <div class="spacer"></div>
-          <el-button type="danger" plain @click="removeKey(detail.key, true)">删除键</el-button>
-        </div>
-      </template>
-    </el-drawer>
-
     <!-- 过期时间 -->
     <el-dialog v-model="ttlVisible" title="修改过期时间" width="380px">
       <el-form label-width="80px">
@@ -431,10 +457,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Coin, Document, Folder, Plus, Refresh, Search, Setting } from '@element-plus/icons-vue'
 import { api, errMsg } from '../api'
+import { copyText } from '../utils'
+import { useSplitWidth } from '../useSplit'
 
 const keyTypes = ['string', 'hash', 'list', 'set', 'zset', 'stream']
 
@@ -445,10 +473,19 @@ const infoLoading = ref(false)
 const infoSections = ref<any[]>([])
 const tab = ref('keys')
 
+// 左侧键树宽度可拖动，拖过的宽度记在 localStorage 里
+const {
+  style: splitStyle,
+  dragging: splitDragging,
+  container: splitEl,
+  onPointerDown: onSplitDown,
+  reset: resetSplitWidth
+} = useSplitWidth({ storageKey: 'warden_split_redis', initial: 320, min: 200, max: 640 })
+
 const db = ref(0)
 const switching = ref(false)
 
-// 键列表
+// 键列表：后端一次性返回全部匹配键（最多 5000 条），前端按分隔符组织成树
 const keys = ref<any[]>([])
 const keysLoading = ref(false)
 const pattern = ref('')
@@ -456,19 +493,24 @@ const typeFilter = ref('')
 const keysTotal = ref(0)
 const matched = ref(0)
 const truncated = ref(false)
-// 视图：列表 / 树形
-const keyView = ref<'list' | 'tree'>('list')
 const separator = ref(':')
-// 列表视图的客户端分页（后端已一次性返回全部匹配键，最多 5000 条）
-const listPage = ref(1)
-const listPageSize = 100
-// 树形视图
 const treeRef = ref<any>(null)
+// expandedKeys 只是「展开状态记录」，**不要再绑到 default-expanded-keys**：
+// 那个 prop 一变就会 setDefaultExpandedKeys → node.expand(null, autoExpandParent=true)，
+// 折叠父节点时残留的下级路径又会把父节点撑开，表现为「点了上级收不起来」。
 const expandedKeys = ref<string[]>([])
+// 递归折叠子孙时置位，避免每收一个节点又触发一轮全量子孙扫描
+let deepCollapsing = false
+// 当前选中的键，右侧内嵌详情展示它。
+// selectedKey 是展示名（二进制键已转义），selectedKeyRaw 是它的原始字节（base64）——
+// 两者必须成对使用，拿展示名去查二进制键会查不到。
+const selectedKey = ref('')
+const selectedKeyRaw = ref('')
 interface TreeNode {
   label: string
   path: string
   key?: string
+  keyRaw?: string
   type?: string
   ttl?: number
   size?: number
@@ -496,14 +538,14 @@ const keySaving = ref(false)
 const keyForm = reactive<any>({
   editing: false,
   key: '',
+  keyRaw: '',
   type: 'string',
   field: '',
   value: '',
   ttl: 0
 })
 
-// 键详情
-const detailVisible = ref(false)
+// 键详情（内嵌在右侧，不再用抽屉）
 const detailLoading = ref(false)
 const detail = ref<any>(null)
 
@@ -651,8 +693,9 @@ async function reloadAll() {
   try {
     await loadStatus()
     if (!status.value.online) return
-    listPage.value = 1
-    expandedKeys.value = []
+    // 刷新保留展开状态（preserveExpansion 会裁掉已不存在的目录），
+    // 只有切库才清空，因为那是另一套键空间
+    clearSelection()
     await Promise.all([loadKeys(), loadInfo()])
   } finally {
     switching.value = false
@@ -664,9 +707,8 @@ watch(db, async () => {
   if (!conn.value.configured) return
   switching.value = true
   try {
-    listPage.value = 1
     expandedKeys.value = []
-    detailVisible.value = false
+    clearSelection()
     await loadStatus()
     await Promise.all([loadKeys(), loadInfo()])
   } finally {
@@ -676,15 +718,20 @@ watch(db, async () => {
 
 watch(tab, (v) => {
   if (v === 'info' && !infoSections.value.length) loadInfo()
+  if (v === 'metrics') loadStatus()
+})
+
+// 换分隔符等于换了一套层级，旧的展开路径全失效，按新层级重算
+watch(separator, () => {
+  resetExpansion()
+  syncCurrent()
 })
 
 // ---------- 键列表 ----------
 
+// reset=true 用于「换了查找条件」：展开状态与右侧详情都清空。
+// 否则（刷新、增删改之后）尽量保留原来展开的目录与选中的键，避免视野跳回顶部。
 async function loadKeys(reset = false) {
-  if (reset) {
-    listPage.value = 1
-    expandedKeys.value = []
-  }
   keysLoading.value = true
   try {
     const res = await api<any>('/api/redis/keys', {
@@ -699,23 +746,31 @@ async function loadKeys(reset = false) {
     keysTotal.value = res?.total || 0
     matched.value = res?.matched || keys.value.length
     truncated.value = !!res?.truncated
-    listPage.value = 1
-    expandedKeys.value = []
+    if (reset) {
+      clearSelection()
+      resetExpansion()
+    } else {
+      // 选中的键已被删掉/过滤掉时，右侧详情要一并收起
+      if (selectedKey.value && !keys.value.some((k) => k.key === selectedKey.value)) clearSelection()
+      // 两者都只调一次：都走 applyExpansion，重复调会把刚设好的记录又清空
+      if (expandedKeys.value.length) {
+        preserveExpansion()
+      } else {
+        resetExpansion()
+      }
+      syncCurrent()
+    }
   } catch (e) {
     keys.value = []
     keysTotal.value = 0
     matched.value = 0
     truncated.value = false
+    clearSelection()
     ElMessage.error(errMsg(e))
   } finally {
     keysLoading.value = false
   }
 }
-
-const listPages = computed(() => Math.max(1, Math.ceil(keys.value.length / listPageSize)))
-const pagedKeys = computed(() =>
-  keys.value.slice((listPage.value - 1) * listPageSize, listPage.value * listPageSize)
-)
 
 // ---------- 树形分层 ----------
 
@@ -741,6 +796,7 @@ function buildTree(items: any[], sep: string): TreeNode[] {
       node.label = seg
       if (i === parts.length - 1) {
         node.key = it.key
+        node.keyRaw = it.key_raw || ''
         node.type = it.type
         node.ttl = it.ttl
         node.size = it.size
@@ -789,32 +845,159 @@ function allPaths(nodes: TreeNode[]): string[] {
   return out
 }
 
-function expandAll() {
-  expandedKeys.value = allPaths(treeData.value)
+// allNodes 取出树里已渲染的所有节点（含折叠未展开的子孙），折叠/展开全部要用。
+function allNodes(): any[] {
+  const map = treeRef.value?.store?.nodesMap
+  return map ? (Object.values(map) as any[]) : []
 }
+
+// applyExpansion 命令式展开：由浅到深逐个展开，父节点先开子节点才存在。
+// 这是唯一设置展开状态的地方（不走 prop），所以折叠不会再被反转。
+function applyExpansion(paths: string[]) {
+  const want = [...new Set(paths)].sort((a, b) => a.length - b.length)
+  nextTick(() => {
+    const ok: string[] = []
+    for (const p of want) {
+      const node = treeRef.value?.getNode?.(p)
+      if (!node?.expand) continue
+      node.expand()
+      ok.push(p)
+    }
+    expandedKeys.value = ok
+  })
+}
+
+function expandAll() {
+  applyExpansion(allPaths(treeData.value))
+}
+
 function collapseAll() {
+  // 由深到浅收，父节点收起后子节点的展开状态也就没意义了。
+  // 期间置位 deepCollapsing，避免每次 collapse 都触发一遍全量子孙扫描（键多时是 O(n²)）
+  deepCollapsing = true
+  try {
+    for (const n of allNodes().sort((a, b) => (b.level || 0) - (a.level || 0))) {
+      if (n.expanded) n.collapse?.()
+    }
+  } finally {
+    deepCollapsing = false
+  }
   expandedKeys.value = []
+}
+
+// 键不多（≤120）时默认全展开，进来就能看到键；键多则保持折叠，避免一屏塞满
+function resetExpansion() {
+  applyExpansion(keys.value.length && keys.value.length <= 120 ? allPaths(treeData.value) : [])
+}
+
+// ancestorsOf 返回某个键名在分隔符下的各级父目录（由浅到深）。
+function ancestorsOf(key: string): string[] {
+  const sep = separator.value
+  if (!sep || !key.includes(sep)) return []
+  const parts = key.split(sep)
+  const out: string[] = []
+  let prefix = ''
+  for (let i = 0; i < parts.length - 1; i++) {
+    prefix = prefix ? prefix + sep + parts[i] : parts[i]
+    out.push(prefix)
+  }
+  return out
+}
+
+// preserveExpansion 在键列表刷新后，只保留仍然存在的目录展开状态，
+// 并把当前选中键的父目录补上，否则右侧详情还开着、左边却找不到对应节点。
+function preserveExpansion() {
+  const folders = new Set(allPaths(treeData.value))
+  const keep = new Set(expandedKeys.value.filter((p) => folders.has(p)))
+  if (selectedKey.value) {
+    for (const a of ancestorsOf(selectedKey.value)) if (folders.has(a)) keep.add(a)
+  }
+  applyExpansion([...keep])
+}
+
+// 树重建后高亮会丢，选中键还在列表里就补回来
+function syncCurrent() {
+  if (!selectedKey.value) return
+  nextTick(() => treeRef.value?.setCurrentKey?.(selectedKey.value))
+}
+
+function onTreeClick(data: TreeNode) {
+  if (data.key) openKey(data.key, data.keyRaw)
+}
+
+// 手动展开/折叠也记进 expandedKeys，刷新后能还原
+function onNodeExpand(data: TreeNode) {
+  if (!expandedKeys.value.includes(data.path)) expandedKeys.value = [...expandedKeys.value, data.path]
+}
+
+// 折叠一个目录时，把它下面所有已展开的子孙一并收起。
+// 只靠 el-tree 自己收，隐藏起来的子节点内部仍是 expanded，
+// 下次再点开父节点，下级还是原样摊开——用户预期是「点上级 = 整体折叠」。
+function onNodeCollapse(data: TreeNode) {
+  if (deepCollapsing) {
+    expandedKeys.value = expandedKeys.value.filter((p) => p !== data.path)
+    return
+  }
+  const sep = separator.value
+  const prefix = sep ? data.path + sep : ''
+  if (prefix) {
+    deepCollapsing = true
+    try {
+      for (const n of allNodes()) {
+        if (n.expanded && n.key !== data.path && String(n.key).startsWith(prefix)) n.collapse?.()
+      }
+    } finally {
+      deepCollapsing = false
+    }
+  }
+  expandedKeys.value = expandedKeys.value.filter(
+    (p) => p !== data.path && !(prefix && p.startsWith(prefix))
+  )
 }
 
 // ---------- 键详情 ----------
 
-async function openKey(key: string) {
-  detailVisible.value = true
+function clearSelection() {
+  selectedKey.value = ''
+  selectedKeyRaw.value = ''
+  detail.value = null
+}
+
+// openKey 打开键详情。key 是展示名，keyRaw 是原始字节（base64，二进制键才有）；
+// 请求时优先带 key_raw，后端据此还原真正的键名。
+async function openKey(key: string, keyRaw = '') {
+  selectedKey.value = key
+  selectedKeyRaw.value = keyRaw
   detailLoading.value = true
   detail.value = null
   try {
-    detail.value = await api<any>('/api/redis/key', { query: { db: db.value, key } })
+    const res = await api<any>('/api/redis/key', {
+      query: { db: db.value, key, key_raw: keyRaw }
+    })
+    detail.value = res
+    // 以后端回带的为准：展示名与原始字节都以前端列表可能缺字段的情况兜住
+    if (res?.key) selectedKey.value = res.key
+    if (res?.key_raw) selectedKeyRaw.value = res.key_raw
+    syncCurrent()
   } catch (e) {
-    detailVisible.value = false
+    clearSelection()
     ElMessage.error(errMsg(e))
   } finally {
     detailLoading.value = false
   }
 }
 
+async function copyValue() {
+  const v = typeof detail.value?.preview === 'string' ? detail.value.preview : ''
+  const ok = await copyText(v)
+  if (ok) ElMessage.success('已复制到剪贴板')
+  else ElMessage.warning('复制失败，请手动选择内容')
+}
+
 function openNewKey() {
   keyForm.editing = false
   keyForm.key = ''
+  keyForm.keyRaw = ''
   keyForm.type = 'string'
   keyForm.field = ''
   keyForm.value = ''
@@ -826,6 +1009,8 @@ function openEditKey() {
   if (!detail.value) return
   keyForm.editing = true
   keyForm.key = detail.value.key
+  // 二进制键名在输入框里只能显示转义形式，真正写回时用原始字节
+  keyForm.keyRaw = detail.value.key_raw || ''
   keyForm.type = 'string'
   keyForm.field = ''
   keyForm.value = typeof detail.value.preview === 'string' ? detail.value.preview : ''
@@ -840,11 +1025,12 @@ async function saveKey() {
   }
   keySaving.value = true
   try {
-    await api('/api/redis/key', {
+    const res = await api<any>('/api/redis/key', {
       method: 'PUT',
       query: { db: db.value },
       body: {
         key: keyForm.key,
+        key_raw: keyForm.keyRaw || '',
         type: keyForm.type,
         field: keyForm.field,
         value: keyForm.value,
@@ -854,7 +1040,10 @@ async function saveKey() {
     ElMessage.success('已保存')
     keyVisible.value = false
     await loadKeys()
-    if (detailVisible.value) await openKey(keyForm.key)
+    // 新建的键直接打开详情；编辑中的键刷新内容
+    if (!keyForm.editing || selectedKey.value) {
+      await openKey(res?.key || keyForm.key, res?.key_raw || keyForm.keyRaw || '')
+    }
   } catch (e) {
     ElMessage.error(errMsg(e))
   } finally {
@@ -862,7 +1051,8 @@ async function saveKey() {
   }
 }
 
-async function removeKey(key: string, fromDrawer = false) {
+// removeKey 删除键。key 是展示名（用于确认框），keyRaw 是原始字节。
+async function removeKey(key: string, keyRaw = '', fromPanel = false) {
   try {
     await ElMessageBox.confirm(`确定删除键「${key}」吗？该操作不可恢复。`, '删除键', {
       type: 'warning',
@@ -873,9 +1063,10 @@ async function removeKey(key: string, fromDrawer = false) {
     return
   }
   try {
-    await api('/api/redis/key', { method: 'DELETE', query: { db: db.value, key } })
+    await api('/api/redis/key', { method: 'DELETE', query: { db: db.value, key, key_raw: keyRaw } })
     ElMessage.success('已删除')
-    if (fromDrawer) detailVisible.value = false
+    // 先收起详情，否则刷新键列表时 preserveExpansion 会把这个已删的键的父目录又补回来
+    if (fromPanel || selectedKey.value === key) clearSelection()
     await loadKeys()
     await loadStatus()
   } catch (e) {
@@ -890,16 +1081,18 @@ function openTTL() {
 
 async function saveTTL() {
   if (!detail.value) return
+  const key = detail.value.key
+  const keyRaw = detail.value.key_raw || ''
   ttlSaving.value = true
   try {
     await api('/api/redis/key/ttl', {
       method: 'POST',
       query: { db: db.value },
-      body: { key: detail.value.key, ttl: ttlValue.value || 0 }
+      body: { key, key_raw: keyRaw, ttl: ttlValue.value || 0 }
     })
     ElMessage.success('已更新')
     ttlVisible.value = false
-    await openKey(detail.value.key)
+    await openKey(key, keyRaw)
     await loadKeys()
   } catch (e) {
     ElMessage.error(errMsg(e))
@@ -944,44 +1137,64 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.split {
+  display: grid;
+  /* 列宽由 useSplitWidth 的 :style 内联给出，这里只作兜底 */
+  grid-template-columns: 320px 12px minmax(0, 1fr);
+  gap: 0;
+}
+.side-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px 8px;
+  border-bottom: 1px solid var(--line);
+}
+/* 左侧键名树 */
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding-right: 8px;
+  overflow: hidden;
+}
+.db-ico {
+  color: var(--ink-3);
+  flex: none;
+}
+.db-name {
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tree-meta {
+  font-size: 11px;
+  flex: none;
+}
+.type-tag {
+  flex: none;
+  transform: scale(0.88);
+  transform-origin: left center;
+}
+.sep-input :deep(.el-input__inner) {
+  text-align: center;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+:deep(.el-tree-node__content) {
+  height: 30px;
+}
+:deep(.el-tree-node.is-current > .el-tree-node__content) {
+  background: #eef3ff;
+}
 .key-link {
   cursor: pointer;
   color: var(--brand);
 }
 .key-link:hover {
   text-decoration: underline;
-}
-.tree-node {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  width: 100%;
-  font-size: 12.5px;
-  padding: 2px 0;
-}
-.t-ico {
-  color: var(--ink-3);
-}
-.t-label {
-  font-weight: 600;
-}
-.t-count {
-  font-size: 11.5px;
-}
-.t-self-tag {
-  font-size: 11px;
-  padding: 0 6px;
-  border-radius: 4px;
-  background: #fef3e6;
-  color: #b25a00;
-  border: 1px solid #f7d9b0;
-}
-.tree-actions {
-  margin-left: auto;
-  display: none;
-}
-.tree-node:hover .tree-actions {
-  display: inline-flex;
 }
 .kv {
   display: flex;
@@ -1017,14 +1230,14 @@ onMounted(async () => {
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-all;
-  max-height: 420px;
+  max-height: calc(100vh - 520px);
   overflow-y: auto;
   margin: 0;
 }
 .list-preview {
   border: 1px solid var(--line);
   border-radius: 8px;
-  max-height: 420px;
+  max-height: calc(100vh - 520px);
   overflow-y: auto;
 }
 .list-item {

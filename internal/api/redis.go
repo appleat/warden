@@ -322,14 +322,29 @@ func (d *Deps) redisKeys(c *gin.Context) {
 	httpx.OK(c, page)
 }
 
+// redisKeyFromQuery 从查询参数还原键名。
+// 二进制键（如 Java 序列化的 \xac\xed\x00\x05t...）经 JSON 传到前端会丢字节，
+// 前端回传的是 key_raw（base64 原始字节），这里优先用它。
+func redisKeyFromQuery(c *gin.Context) (string, bool) {
+	key, err := rediscli.DecodeKey(c.Query("key_raw"), c.Query("key"))
+	if err != nil {
+		httpx.BadRequest(c, err.Error())
+		return "", false
+	}
+	if key == "" {
+		httpx.BadRequest(c, "请指定键名")
+		return "", false
+	}
+	return key, true
+}
+
 func (d *Deps) redisKeyDetail(c *gin.Context) {
 	cl, _, ok := d.redisClient(c)
 	if !ok {
 		return
 	}
-	key := strings.TrimSpace(c.Query("key"))
-	if key == "" {
-		httpx.BadRequest(c, "请指定键名")
+	key, ok := redisKeyFromQuery(c)
+	if !ok {
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), redisTimeout)
@@ -355,11 +370,12 @@ func (d *Deps) redisKeyDetail(c *gin.Context) {
 }
 
 type redisKeyReq struct {
-	Key   string `json:"key"`
-	Type  string `json:"type"`
-	Field string `json:"field"`
-	Value string `json:"value"`
-	TTL   int    `json:"ttl"`
+	Key    string `json:"key"`
+	KeyRaw string `json:"key_raw"` // 二进制键名的 base64 原始字节
+	Type   string `json:"type"`
+	Field  string `json:"field"`
+	Value  string `json:"value"`
+	TTL    int    `json:"ttl"`
 }
 
 // redisSetKey 新建或更新键。字符串整体覆盖，hash/list/set/zset 只追加单条，
@@ -374,7 +390,11 @@ func (d *Deps) redisSetKey(c *gin.Context) {
 		httpx.BadRequest(c, "参数解析失败")
 		return
 	}
-	key := strings.TrimSpace(req.Key)
+	key, err := rediscli.DecodeKey(req.KeyRaw, req.Key)
+	if err != nil {
+		httpx.BadRequest(c, err.Error())
+		return
+	}
 	if key == "" {
 		httpx.BadRequest(c, "请填写键名")
 		return
@@ -411,8 +431,9 @@ func (d *Deps) redisSetKey(c *gin.Context) {
 		httpx.Fail(c, http.StatusBadGateway, err.Error())
 		return
 	}
-	middleware.SetAuditDetail(c, "写入 Redis 键 "+key+" ("+typ+")")
-	httpx.OKMsg(c, "已写入", gin.H{"key": key, "type": typ})
+	// 审计与回包都用展示名，二进制键直接把原始字节写进日志会变成乱码
+	middleware.SetAuditDetail(c, "写入 Redis 键 "+rediscli.KeyDisplay(key)+" ("+typ+")")
+	httpx.OKMsg(c, "已写入", gin.H{"key": rediscli.KeyDisplay(key), "key_raw": rediscli.KeyRaw(key), "type": typ})
 }
 
 func (d *Deps) redisDeleteKey(c *gin.Context) {
@@ -420,9 +441,8 @@ func (d *Deps) redisDeleteKey(c *gin.Context) {
 	if !ok {
 		return
 	}
-	key := strings.TrimSpace(c.Query("key"))
-	if key == "" {
-		httpx.BadRequest(c, "请指定键名")
+	key, ok := redisKeyFromQuery(c)
+	if !ok {
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), redisTimeout)
@@ -440,13 +460,14 @@ func (d *Deps) redisDeleteKey(c *gin.Context) {
 		httpx.Fail(c, http.StatusBadGateway, err.Error())
 		return
 	}
-	middleware.SetAuditDetail(c, "删除 Redis 键 "+key)
+	middleware.SetAuditDetail(c, "删除 Redis 键 "+rediscli.KeyDisplay(key))
 	httpx.OKMsg(c, "已删除", gin.H{"deleted": n})
 }
 
 type redisTTLReq struct {
-	Key string `json:"key"`
-	TTL int    `json:"ttl"` // <=0 表示移除过期时间
+	Key    string `json:"key"`
+	KeyRaw string `json:"key_raw"`
+	TTL    int    `json:"ttl"` // <=0 表示移除过期时间
 }
 
 func (d *Deps) redisExpireKey(c *gin.Context) {
@@ -459,7 +480,11 @@ func (d *Deps) redisExpireKey(c *gin.Context) {
 		httpx.BadRequest(c, "参数解析失败")
 		return
 	}
-	key := strings.TrimSpace(req.Key)
+	key, err := rediscli.DecodeKey(req.KeyRaw, req.Key)
+	if err != nil {
+		httpx.BadRequest(c, err.Error())
+		return
+	}
 	if key == "" {
 		httpx.BadRequest(c, "请指定键名")
 		return
@@ -483,7 +508,7 @@ func (d *Deps) redisExpireKey(c *gin.Context) {
 	if req.TTL <= 0 {
 		action = "移除过期时间"
 	}
-	middleware.SetAuditDetail(c, action+" "+key)
+	middleware.SetAuditDetail(c, action+" "+rediscli.KeyDisplay(key))
 	httpx.OKMsg(c, action+"成功", gin.H{"changed": changed})
 }
 

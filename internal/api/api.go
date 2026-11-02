@@ -96,6 +96,18 @@ func NewRouter(d *Deps) *gin.Engine {
 		// Redis 连接配置同理：控制端落库，Agent 只通过请求头拿参数
 		api.GET("/redis/conn", d.getRedisConn)
 		api.PUT("/redis/conn", middleware.RequireRole(auth.RoleOperator), d.saveRedisConn)
+
+		// MySQL 连接配置同样由控制端保存（按主机隔离），密码加密落库
+		api.GET("/mysql/conn", d.getMySQLConn)
+		api.PUT("/mysql/conn", middleware.RequireRole(auth.RoleOperator), d.saveMySQLConn)
+	}
+
+	// 配置内容格式校验：纯本地解析，不访问 Nacos，是只读操作，
+	// 所以单独成组（不挂审计中间件），避免每次输入都往审计日志里写一条。
+	va := r.Group("/api")
+	va.Use(middleware.Auth(d.Auth))
+	{
+		va.POST("/nacos/config/validate", d.nacosValidateConfig)
 	}
 
 	// 主机相关接口：按 ?host= 分发到本机或远程 Agent
@@ -181,6 +193,32 @@ func NewRouter(d *Deps) *gin.Engine {
 		ra.DELETE("/redis/key", middleware.RequireRole(auth.RoleOperator), d.redisDeleteKey)
 		ra.POST("/redis/key/ttl", middleware.RequireRole(auth.RoleOperator), d.redisExpireKey)
 		ra.POST("/redis/command", middleware.RequireRole(auth.RoleOperator), d.redisCommand)
+	}
+
+	// MySQL：连接参数同样按主机注入请求头，本机直连、远程交给 Agent 连接
+	ma := r.Group("/api")
+	ma.Use(middleware.Auth(d.Auth), middleware.Audit(d.Store),
+		middleware.MySQLConn(d.Fleet, d.Store, d.Cfg.SecretKey()), proxyMW)
+	{
+		ma.GET("/mysql/overview", d.mysqlOverview)
+		ma.GET("/mysql/databases", d.mysqlDatabases)
+		ma.GET("/mysql/tables", d.mysqlTables)
+		ma.GET("/mysql/table", d.mysqlTable)
+		ma.GET("/mysql/rows", d.mysqlRows)
+		ma.GET("/mysql/processes", d.mysqlSessions)
+		ma.GET("/mysql/variables", d.mysqlVariables)
+		ma.GET("/mysql/slow", d.mysqlSlow)
+		ma.POST("/mysql/query", middleware.RequireRole(auth.RoleOperator), d.mysqlQuery)
+		ma.POST("/mysql/processes/kill", middleware.RequireRole(auth.RoleOperator), d.mysqlKillSession)
+		// 导入导出、建表改表都会改数据或把数据带出面板，统一要求 operator
+		ma.POST("/mysql/export", middleware.RequireRole(auth.RoleOperator), d.mysqlExport)
+		ma.POST("/mysql/import", middleware.RequireRole(auth.RoleOperator), d.mysqlImport)
+		ma.POST("/mysql/table/create", middleware.RequireRole(auth.RoleOperator), d.mysqlCreateTable)
+		ma.POST("/mysql/table/alter", middleware.RequireRole(auth.RoleOperator), d.mysqlAlterTable)
+		// 单个字段修改与单行数据修改同样属于写操作
+		ma.POST("/mysql/column/alter", middleware.RequireRole(auth.RoleOperator), d.mysqlAlterColumn)
+		ma.POST("/mysql/row/update", middleware.RequireRole(auth.RoleOperator), d.mysqlUpdateRow)
+		ma.POST("/mysql/slow/explain", middleware.RequireRole(auth.RoleOperator), d.mysqlSlowExplain)
 	}
 
 	// WebSocket：浏览器无法自定义 Header，token 通过 query 传递

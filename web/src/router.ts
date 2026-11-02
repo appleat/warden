@@ -34,6 +34,11 @@ const routes = [
         meta: { title: 'Redis 服务', desc: '键浏览、运行指标与命令执行' }
       },
       {
+        path: 'mysql',
+        component: () => import('./views/MySQL.vue'),
+        meta: { title: 'MySQL 服务', desc: '库表浏览、SQL 查询与会话管理' }
+      },
+      {
         path: 'files',
         component: () => import('./views/Files.vue'),
         meta: { title: '文件管理', desc: '浏览、上传、下载与在线编辑' }

@@ -3,12 +3,14 @@ package api
 import (
 	"bufio"
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -28,16 +30,25 @@ import (
 
 // testRedis 只实现面板用到的命令，供接口层测试使用。
 type testRedis struct {
-	ln net.Listener
+	ln   net.Listener
+	keys []string // SCAN 返回的键名，默认 user:1 / cfg:app
 }
 
+// defaultTestKeys 是绝大多数用例依赖的固定键集。
+var defaultTestKeys = []string{"user:1", "cfg:app"}
+
 func startTestRedis(t *testing.T) *testRedis {
+	t.Helper()
+	return startTestRedisWithKeys(t, defaultTestKeys...)
+}
+
+func startTestRedisWithKeys(t *testing.T, keys ...string) *testRedis {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("监听失败：%v", err)
 	}
-	s := &testRedis{ln: ln}
+	s := &testRedis{ln: ln, keys: keys}
 	go func() {
 		for {
 			c, err := ln.Accept()
@@ -62,7 +73,7 @@ func (s *testRedis) serve(c net.Conn) {
 		if err != nil {
 			return
 		}
-		if _, err := w.WriteString(testReply(args)); err != nil {
+		if _, err := w.WriteString(s.reply(args)); err != nil {
 			return
 		}
 		if err := w.Flush(); err != nil {
@@ -110,7 +121,7 @@ func testArr(items ...string) string {
 
 var testRedisMu sync.Mutex
 
-func testReply(args []string) string {
+func (s *testRedis) reply(args []string) string {
 	testRedisMu.Lock()
 	defer testRedisMu.Unlock()
 	switch strings.ToUpper(args[0]) {
@@ -124,10 +135,22 @@ func testReply(args []string) string {
 			"# Stats\r\nkeyspace_hits:8\r\nkeyspace_misses:2\r\n# Replication\r\nrole:master\r\n" +
 			"# Keyspace\r\ndb0:keys=2,expires=0,avg_ttl=0\r\n")
 	case "DBSIZE":
-		return ":2\r\n"
+		return fmt.Sprintf(":%d\r\n", len(s.keys))
 	case "SCAN":
-		return "*2\r\n" + testBulk("0") + testArr("user:1", "cfg:app")
+		return "*2\r\n" + testBulk("0") + testArr(s.keys...)
 	case "TYPE":
+		// 只认识 SCAN 返回过的键，其余按「不存在」处理。
+		// 这样「用转义展示名去查二进制键」这类错误会被真实地判成 404。
+		found := false
+		for _, k := range s.keys {
+			if k == args[1] {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return "+none\r\n"
+		}
 		if args[1] == "cfg:app" {
 			return "+hash\r\n"
 		}
@@ -150,6 +173,8 @@ func testReply(args []string) string {
 		return testBulk("demo")
 	case "SET":
 		return "+OK\r\n"
+	case "DEL", "EXPIRE", "PERSIST":
+		return ":1\r\n"
 	}
 	return "-ERR unknown command\r\n"
 }
@@ -363,5 +388,83 @@ func TestRedisConnectionIsHostScoped(t *testing.T) {
 	code, body := env.do(t, http.MethodGet, fmt.Sprintf("/api/redis/status?host=%d", other.ID), "")
 	if code != http.StatusPreconditionFailed {
 		t.Fatalf("未配置的主机应返回 412，实际 %d：%v", code, body)
+	}
+}
+
+// Java 序列化写出来的键名形如 \xac\xed\x00\x05t\x00\x04name，是二进制字节。
+// 这类键名经 JSON 传到前端时，非法 UTF-8 字节会被 encoding/json 替换成 U+FFFD，
+// 页面上就是乱码；再拿这个乱码字符串回查，自然报「键不存在」。
+// 所以列表/详情必须带上 key_raw（原始字节的 base64），前端回传时用它。
+func TestRedisBinaryKeyRoundTrip(t *testing.T) {
+	binKey := "\xac\xed\x00\x05t\x00\x04name"
+	fake := startTestRedisWithKeys(t, "cfg:app", binKey)
+	env := newTestEnv(t, fake.addr())
+
+	code, body := env.do(t, http.MethodGet,
+		fmt.Sprintf("/api/redis/keys?host=%d&pattern=*&count=50", env.hostID), "")
+	if code != http.StatusOK {
+		t.Fatalf("keys 返回 %d：%v", code, body)
+	}
+	data, _ := body["data"].(map[string]any)
+	items, _ := data["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("键列表应为 2 条，实际 %v", data)
+	}
+	var bin map[string]any
+	for _, it := range items {
+		m, _ := it.(map[string]any)
+		if raw, _ := m["key_raw"].(string); raw != "" {
+			bin = m
+			break
+		}
+	}
+	if bin == nil {
+		t.Fatalf("二进制键应带回 key_raw：%v", items)
+	}
+	wantB64 := base64.StdEncoding.EncodeToString([]byte(binKey))
+	if bin["key_raw"] != wantB64 {
+		t.Fatalf("key_raw 应为原始字节的 base64，实际 %v", bin["key_raw"])
+	}
+	disp, _ := bin["key"].(string)
+	if !strings.HasPrefix(disp, `\xac\xed\x00\x05t\x00\x04`) {
+		t.Fatalf("展示名应转义二进制字节，实际 %q", disp)
+	}
+	if strings.ContainsRune(disp, '\uFFFD') {
+		t.Fatalf("展示名不应含替换字符：%q", disp)
+	}
+
+	// 用 key_raw 查详情：必须真的命中那个键
+	code, body = env.do(t, http.MethodGet,
+		fmt.Sprintf("/api/redis/key?host=%d&key_raw=%s", env.hostID, url.QueryEscape(wantB64)), "")
+	if code != http.StatusOK {
+		t.Fatalf("按 key_raw 查详情返回 %d：%v", code, body)
+	}
+	data, _ = body["data"].(map[string]any)
+	if data["key_raw"] != wantB64 || data["type"] != "string" {
+		t.Fatalf("详情应回带同样的 key_raw：%v", data)
+	}
+
+	// 反面用例：只拿转义后的展示名去查（旧前端的做法）必须查不到，
+	// 这就是用户看到的「点开显示键不存在」。
+	code, body = env.do(t, http.MethodGet,
+		fmt.Sprintf("/api/redis/key?host=%d&key=%s", env.hostID, url.QueryEscape(disp)), "")
+	if code != http.StatusNotFound {
+		t.Fatalf("用转义展示名查键应 404，实际 %d：%v", code, body)
+	}
+
+	// 删除同样要按原始字节走
+	code, body = env.do(t, http.MethodDelete,
+		fmt.Sprintf("/api/redis/key?host=%d&key_raw=%s", env.hostID, url.QueryEscape(wantB64)), "")
+	if code != http.StatusOK {
+		t.Fatalf("按 key_raw 删除返回 %d：%v", code, body)
+	}
+
+	// 非法的 base64 应当明确拒绝，而不是当成键名去查
+	code, body = env.do(t, http.MethodGet, fmt.Sprintf("/api/redis/key?host=%d&key_raw=!!!", env.hostID), "")
+	if code != http.StatusBadRequest {
+		t.Fatalf("非法 key_raw 应 400，实际 %d：%v", code, body)
+	}
+	if msg, _ := body["msg"].(string); !strings.Contains(msg, "编码") {
+		t.Fatalf("提示应说明编码问题：%v", body)
 	}
 }

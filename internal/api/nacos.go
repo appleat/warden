@@ -309,14 +309,45 @@ type nacosConfigReq struct {
 	Type      string `json:"type"`
 }
 
-func (d *Deps) nacosPublishConfig(c *gin.Context) {
-	cl, _, ok := d.nacosClient(c)
-	if !ok {
-		return
-	}
+// nacosValidateConfig 只在本机做内容格式校验，不访问 Nacos、也不落库。
+// 前端编辑配置时用它做即时提示，发布接口里还会再拦一次（防止绕过前端）。
+//
+// 校验不通过时仍然返回 200 + valid=false：请求本身是成功的，只是内容不合格。
+// 这样前端一边输入一边校验，不会在浏览器控制台刷出一串 4xx。
+func (d *Deps) nacosValidateConfig(c *gin.Context) {
 	var req nacosConfigReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpx.BadRequest(c, "参数解析失败")
+		return
+	}
+	if !nacos.IsYAMLConfig(req.Type, req.DataID) {
+		httpx.OK(c, gin.H{"format": "text", "valid": true})
+		return
+	}
+	if err := nacos.ValidateYAML(req.Content); err != nil {
+		httpx.OK(c, gin.H{"format": "yaml", "valid": false, "msg": err.Error()})
+		return
+	}
+	httpx.OK(c, gin.H{"format": "yaml", "valid": true})
+}
+
+func (d *Deps) nacosPublishConfig(c *gin.Context) {
+	var req nacosConfigReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.BadRequest(c, "参数解析失败")
+		return
+	}
+	// YAML 内容先过语法校验（放在取连接之前：格式错误不需要连上配置中心），
+	// 避免把缩进错误的内容推给配置中心
+	if nacos.IsYAMLConfig(req.Type, req.DataID) {
+		if err := nacos.ValidateYAML(req.Content); err != nil {
+			httpx.BadRequest(c, err.Error())
+			return
+		}
+	}
+
+	cl, _, ok := d.nacosClient(c)
+	if !ok {
 		return
 	}
 	// 空命名空间代表 public，不做默认值兜底，避免写到错误的命名空间

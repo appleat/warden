@@ -126,7 +126,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { computed, defineComponent, h, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -156,6 +156,36 @@ interface NavItem {
   children?: NavItem[]
 }
 
+// Element Plus 图标库里没有 Database（只有 Coin / Collection / Notebook 这些近似项），
+// 而「数据库」这个一级菜单需要一眼能认出来的圆柱造型，所以手写一个：
+// 尺寸跟 el-icon 对齐（1em、currentColor），描边加粗以贴近其它实心图标的视觉重量。
+const Database = defineComponent({
+  name: 'DatabaseIcon',
+  setup() {
+    return () =>
+      h(
+        'svg',
+        {
+          viewBox: '0 0 1024 1024',
+          xmlns: 'http://www.w3.org/2000/svg',
+          fill: 'none',
+          stroke: 'currentColor',
+          'stroke-width': 80,
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round'
+        },
+        [
+          // 顶面
+          h('ellipse', { cx: 512, cy: 248, rx: 400, ry: 110 }),
+          // 圆柱侧壁 + 底
+          h('path', { d: 'M112 248v520c0 61 179 110 400 110s400-49 400-110V248' }),
+          // 中间一层分隔弧（层数多了在 16px 下会糊成一片，只保留一条）
+          h('path', { d: 'M112 520c0 61 179 110 400 110s400-49 400-110' })
+        ]
+      )
+  }
+})
+
 const navGroups: { title: string; items: NavItem[] }[] = [
   {
     title: '概览',
@@ -166,16 +196,23 @@ const navGroups: { title: string; items: NavItem[] }[] = [
     items: [
       { name: '主机管理', path: '/hosts', icon: Connection },
       {
-        name: '服务管理',
+        name: '服务',
         icon: Box,
         children: [
           { name: '容器管理', path: '/containers' },
           { name: 'Nacos 服务', path: '/nacos' },
-          { name: 'Redis 服务', path: '/redis' }
         ]
       },
       {
-        name: '系统管理',
+        name: '数据库',
+        icon: Database,
+        children: [
+          { name: 'Redis', path: '/redis' },
+          { name: 'MySQL', path: '/mysql' }
+        ]
+      },
+      {
+        name: '系统',
         icon: Monitor,
         children: [
           { name: '文件管理', path: '/files' },
