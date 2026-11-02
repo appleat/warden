@@ -31,20 +31,25 @@ type Config struct {
 	CertFile   string `yaml:"cert_file"`
 	KeyFile    string `yaml:"key_file"`
 
+	// AutoOpenPort 启动时自动在防火墙放行监听端口
+	// （控制端放行 listen，被管端放行 agent_listen）
+	AutoOpenPort bool `yaml:"auto_open_port"`
+
 	path string
 }
 
 func defaults() Config {
 	return Config{
-		Mode:        "server",
-		AgentListen: ":8090",
-		Listen:      ":8080",
-		DataDir:    "./data",
-		TokenHours: 24,
-		DockerHost: "",
-		Shell:      "",
-		FileRoot:   "/",
-		LogLevel:   "info",
+		Mode:         "server",
+		AgentListen:  ":8090",
+		Listen:       ":8080",
+		DataDir:      "./data",
+		TokenHours:   24,
+		DockerHost:   "",
+		Shell:        "",
+		FileRoot:     "/",
+		LogLevel:     "info",
+		AutoOpenPort: true,
 	}
 }
 
@@ -78,6 +83,9 @@ func Load() (*Config, error) {
 	envOverride(&cfg.CertFile, "WARDEN_CERT_FILE")
 	envOverride(&cfg.KeyFile, "WARDEN_KEY_FILE")
 	envOverride(&cfg.JWTSecret, "WARDEN_JWT_SECRET")
+	if v := os.Getenv("WARDEN_AUTO_OPEN_PORT"); v != "" {
+		cfg.AutoOpenPort = parseBool(v, cfg.AutoOpenPort)
+	}
 	if v := os.Getenv("WARDEN_TOKEN_HOURS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.TokenHours = n
@@ -130,6 +138,17 @@ func envOverride(dst *string, key string) {
 	if v := os.Getenv(key); v != "" {
 		*dst = v
 	}
+}
+
+// parseBool 解析环境变量里的布尔值，认不出来就保留默认值（不报错，免得容器里写错一个值就起不来）。
+func parseBool(v string, def bool) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on", "y":
+		return true
+	case "0", "false", "no", "off", "n":
+		return false
+	}
+	return def
 }
 
 func loadOrCreateSecret(path string) (string, error) {

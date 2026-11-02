@@ -113,6 +113,8 @@ func runServer(cfg *config.Config) {
 	monitorSvc := monitor.New(db, notifier)
 	monitorSvc.Start(ctx)
 
+	fw := system.NewFirewall()
+
 	deps := &api.Deps{
 		Cfg:     cfg,
 		Store:   db,
@@ -120,7 +122,7 @@ func runServer(cfg *config.Config) {
 		Metrics: collector,
 		Docker:  docker.New(cfg.DockerHost),
 		Files:   files,
-		FW:      system.NewFirewall(),
+		FW:      fw,
 		Monitor: monitorSvc,
 		Notify:  notifier,
 		Fleet:   reg,
@@ -133,6 +135,8 @@ func runServer(cfg *config.Config) {
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+
+	openPortAtStartup(fw, cfg, cfg.Listen, "warden-server")
 
 	slog.Info("Warden 控制端已启动",
 		"listen", cfg.Listen, "version", version, "data_dir", cfg.DataDir,
@@ -165,12 +169,14 @@ func runAgent(cfg *config.Config) {
 	collector := metrics.New()
 	collector.Start(ctx)
 
+	fw := system.NewFirewall()
+
 	deps := &api.Deps{
 		Cfg:     cfg,
 		Metrics: collector,
 		Docker:  docker.New(cfg.DockerHost),
 		Files:   files,
-		FW:      system.NewFirewall(),
+		FW:      fw,
 		Version: version,
 	}
 
@@ -184,6 +190,8 @@ func runAgent(cfg *config.Config) {
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+
+	openPortAtStartup(fw, cfg, cfg.AgentListen, "warden-agent")
 
 	slog.Info("Warden Agent 已启动",
 		"listen", cfg.AgentListen, "name", name, "version", version,
@@ -232,6 +240,30 @@ func setupLogger(level string) {
 	}
 	h := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: lv})
 	slog.SetDefault(slog.New(h))
+}
+
+// openPortAtStartup 按配置在启动时自动放行监听端口（控制端 listen / 被管端 agent_listen）。
+// 只加一条 allow 规则，不动防火墙开关，也不改已有规则；
+// 失败只记日志、绝不阻断启动 —— 面板能起来比端口放行更重要。
+func openPortAtStartup(fw *system.Firewall, cfg *config.Config, addr, comment string) {
+	if !cfg.AutoOpenPort {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	res := fw.EnsurePortOpen(ctx, addr, comment)
+	args := []any{"addr", addr, "port", res.Port, "driver", res.Driver, "detail", res.Message}
+	switch res.Status {
+	case "opened":
+		slog.Info("已自动放行监听端口", args...)
+	case "exists":
+		slog.Info("监听端口已在防火墙放行", args...)
+	case "skipped":
+		slog.Info("跳过自动放行端口", args...)
+	default:
+		slog.Warn("自动放行监听端口失败", args...)
+	}
 }
 
 func isLoopback(addr string) bool {

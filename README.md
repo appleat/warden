@@ -121,6 +121,12 @@ go test ./...  # 单元测试：路径穿越、zip slip、AES、TOTP、防火墙
 | `agent_listen` | `WARDEN_AGENT_LISTEN` | Agent 监听地址，默认 `:8090` |
 | `agent_token` | `WARDEN_AGENT_TOKEN` | Agent 令牌，必须与控制端登记一致 |
 | `cert_file` / `key_file` | `WARDEN_CERT_FILE` / `WARDEN_KEY_FILE` | 启用 HTTPS |
+| `auto_open_port` | `WARDEN_AUTO_OPEN_PORT` | 启动时自动在防火墙放行监听端口，默认 `true` |
+
+`auto_open_port` 的行为：控制端放行 `listen`，被管端放行 `agent_listen`。只新增一条 `allow` 规则，
+**不会启停防火墙、不改动已有规则**，重复启动不会产生重复规则（已存在则跳过）。需要 root 权限；
+只监听 `127.0.0.1`、容器内、或没装 ufw/firewalld/iptables 时会跳过并在日志与防火墙页说明原因。
+iptables 的规则重启后丢失，建议装 `iptables-persistent`。
 
 ## 结构
 

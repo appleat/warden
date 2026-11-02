@@ -26,6 +26,9 @@ agent_name: ""
 
 # ---------- 通用 ----------
 log_level: "info"
+# 启动时自动在防火墙放行监听端口（控制端放行 listen，被管端放行 agent_listen）。
+# 只新增一条 allow 规则，不会启停防火墙；需要 root 权限，已存在则跳过。
+auto_open_port: true
 # 留空使用本机默认 socket（/var/run/docker.sock）
 docker_host: ""
 # 留空自动探测 $SHELL 或 /bin/bash

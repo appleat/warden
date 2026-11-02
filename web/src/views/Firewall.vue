@@ -17,7 +17,7 @@
     </el-alert>
 
     <div class="grid" style="grid-template-columns: 1fr 330px; align-items: start">
-      <div class="card" style="padding: 0">
+      <div class="card" style="padding: 0; min-width: 0">
         <div class="card-title" style="padding: 14px 16px 0; margin-bottom: 6px">
           <div class="row">
             <span>规则列表</span>
@@ -46,7 +46,13 @@
           <el-table-column label="来源" min-width="150">
             <template #default="{ row }"><span class="mono" style="font-size: 12px">{{ row.from }}</span></template>
           </el-table-column>
-          <el-table-column label="原始规则" min-width="220" show-overflow-tooltip>
+          <el-table-column label="备注" min-width="140" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span v-if="row.comment">{{ row.comment }}</span>
+              <span v-else class="muted">-</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="原始规则" min-width="200" show-overflow-tooltip>
             <template #default="{ row }"><span class="mono muted" style="font-size: 11px">{{ row.raw }}</span></template>
           </el-table-column>
           <el-table-column label="操作" width="80" align="right">
@@ -66,6 +72,28 @@
           </div>
           <div class="muted" style="font-size: 11.5px; margin-top: 10px; line-height: 1.7">
             {{ fw.supported ? `检测到 ${fw.driver}，权限${fw.can_edit ? '正常' : '不足（需 root）'}` : fw.message }}
+          </div>
+        </div>
+
+        <div v-if="fw.auto_open" class="card" style="margin-top: 14px">
+          <div class="card-title">
+            <span>启动自动放行</span>
+            <el-tag size="small" effect="plain" :type="autoOpenTag">{{ autoOpenText }}</el-tag>
+          </div>
+          <div class="row" style="gap: 6px; flex-wrap: wrap">
+            <span class="mono" style="font-size: 12.5px">{{ fw.auto_open.port }}/{{ fw.auto_open.proto }}</span>
+            <span v-if="fw.auto_open.driver && fw.auto_open.driver !== 'none'" class="muted" style="font-size: 12px">
+              {{ fw.auto_open.driver }}
+            </span>
+          </div>
+          <div class="muted mono" style="font-size: 11px; margin-top: 6px">
+            {{ fw.auto_open.addr }} · {{ fmtTime(fw.auto_open.at) }}
+          </div>
+          <div class="muted" style="font-size: 11.5px; margin-top: 8px; line-height: 1.7">
+            {{ fw.auto_open.message }}
+          </div>
+          <div class="muted" style="font-size: 11px; margin-top: 8px; line-height: 1.6">
+            由配置项 <code class="mono">auto_open_port</code> 控制，程序每次启动时执行一次，只添加放行规则。
           </div>
         </div>
 
@@ -92,7 +120,19 @@
               <el-input v-model="rule.from" placeholder="1.2.3.4 或 10.0.0.0/8" />
             </el-form-item>
             <el-form-item label="备注">
-              <el-input v-model="rule.comment" placeholder="可选" maxlength="60" />
+              <el-input
+                v-model="rule.comment"
+                :disabled="fw.driver === 'firewalld'"
+                :placeholder="fw.driver === 'firewalld' ? 'firewalld 不支持端口备注' : '可选'"
+                maxlength="60"
+              />
+              <div
+                v-if="fw.driver === 'firewalld'"
+                class="muted"
+                style="font-size: 11px; line-height: 1.6; margin-top: 4px"
+              >
+                firewalld 的端口规则本身不存备注，填了也不会保存
+              </div>
             </el-form-item>
             <el-button type="primary" style="width: 100%" :loading="ruleSaving" @click="addRule">
               应用规则
@@ -105,13 +145,30 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { api, errMsg } from '../api'
+import { fmtTime } from '../utils'
 
 const fw = ref<any>({ rules: [] })
 const fwLoading = ref(false)
+
+// 启动时自动放行监听端口的结果（后端每次启动写一次）
+const autoOpenText = computed(() => {
+  const s = fw.value.auto_open?.status
+  if (s === 'opened') return '已放行'
+  if (s === 'exists') return '已存在'
+  if (s === 'skipped') return '已跳过'
+  if (s === 'failed') return '失败'
+  return '-'
+})
+const autoOpenTag = computed(() => {
+  const s = fw.value.auto_open?.status
+  if (s === 'opened' || s === 'exists') return 'success'
+  if (s === 'failed') return 'danger'
+  return 'info'
+})
 const ruleSaving = ref(false)
 const rule = reactive({ action: 'allow', port: '', proto: 'tcp', from: '', comment: '' })
 const revert = reactive({ token: '', left: 0 })
@@ -174,8 +231,20 @@ async function addRule() {
 }
 
 async function delRule(row: any) {
+  const target = `${row.action === 'deny' ? '封禁' : '放行'} ${row.port || '全部端口'}/${row.proto}`
+  const parts = [
+    `将删除规则 #${row.id}：${target}`,
+    row.from && row.from !== 'Anywhere' ? `来源：${row.from}` : '来源：任意'
+  ]
+  if (row.comment) parts.push(`备注：${row.comment}`)
   try {
-    await ElMessageBox.confirm(`删除规则 #${row.id}：${row.raw}`, '删除规则', { type: 'warning' })
+    await ElMessageBox.confirm(`${parts.join('\n')}\n\n${row.raw}`, '删除防火墙规则', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger',
+      customClass: 'fw-confirm'
+    })
   } catch {
     return
   }
@@ -207,3 +276,12 @@ onBeforeUnmount(() => {
   clearInterval(revertTimer)
 })
 </script>
+
+<style>
+/* 删除确认框里的多行内容（消息框被 teleport 到 body，只能用非 scoped 样式） */
+.fw-confirm .el-message-box__message {
+  white-space: pre-line;
+  line-height: 1.75;
+  word-break: break-all;
+}
+</style>

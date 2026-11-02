@@ -32,13 +32,16 @@ type FirewallStatus struct {
 	Supported bool   `json:"supported"`
 	Message   string `json:"message"`
 	CanEdit   bool   `json:"can_edit"`
+	// AutoOpen 是启动时自动放行监听端口的结果，没开启自动放行时为 nil
+	AutoOpen *AutoOpen `json:"auto_open,omitempty"`
 }
 
 // Firewall 负责探测并操作本机防火墙。
 type Firewall struct {
-	mu     sync.Mutex
-	driver string
-	guard  *revertGuard
+	mu       sync.Mutex
+	driver   string
+	guard    *revertGuard
+	autoOpen *AutoOpen
 }
 
 func NewFirewall() *Firewall {
@@ -67,6 +70,9 @@ func hasCmd(name string) bool {
 	return err == nil
 }
 
+// runCmd 是所有外部命令的唯一出口，测试里替换它就能在任意平台模拟 ufw / firewalld / iptables。
+var runCmd = run
+
 func run(ctx context.Context, name string, args ...string) (string, error) {
 	c, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -93,11 +99,11 @@ func (f *Firewall) Status(ctx context.Context) *FirewallStatus {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	d := f.detect()
-	st := &FirewallStatus{Driver: d, Rules: []Rule{}, CanEdit: isRoot()}
+	st := &FirewallStatus{Driver: d, Rules: []Rule{}, CanEdit: isRoot(), AutoOpen: f.autoOpen}
 	switch d {
 	case "ufw":
 		st.Supported = true
-		out, err := run(ctx, "ufw", "status")
+		out, err := runCmd(ctx, "ufw", "status")
 		if err != nil {
 			st.Message = err.Error()
 			return st
@@ -110,7 +116,7 @@ func (f *Firewall) Status(ctx context.Context) *FirewallStatus {
 		st.Rules = rules
 	case "firewalld":
 		st.Supported = true
-		out, err := run(ctx, "firewall-cmd", "--state")
+		out, err := runCmd(ctx, "firewall-cmd", "--state")
 		if err != nil {
 			st.Message = err.Error()
 			return st
@@ -144,26 +150,34 @@ func (f *Firewall) Status(ctx context.Context) *FirewallStatus {
 var ufwLine = regexp.MustCompile(`^\[\s*(\d+)\]\s+(.+?)\s{2,}(ALLOW|DENY|REJECT|LIMIT)(?:\s+(IN|OUT|FWD))?\s+(.+)$`)
 
 func (f *Firewall) ufwListLocked(ctx context.Context) ([]Rule, error) {
-	out, err := run(ctx, "ufw", "status", "numbered")
+	out, err := runCmd(ctx, "ufw", "status", "numbered")
 	if err != nil {
 		return nil, err
 	}
 	rules := []Rule{}
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimRight(line, "\r")
-		m := ufwLine.FindStringSubmatch(strings.TrimSpace(line))
+		raw := strings.TrimSpace(line)
+		// 备注在行尾形如 "# warden-server"，必须先摘掉：
+		// 否则正则最后一个捕获组会把 "# 备注" 一起吞进「来源」
+		comment := ""
+		if i := strings.Index(raw, "#"); i >= 0 {
+			comment = strings.TrimSpace(raw[i+1:])
+			raw = strings.TrimSpace(raw[:i])
+		}
+		m := ufwLine.FindStringSubmatch(raw)
 		if m == nil {
 			continue
 		}
-		raw := strings.TrimSpace(line)
 		rules = append(rules, Rule{
-			ID:     m[1],
-			Action: strings.ToLower(m[3]),
-			Port:   ufwExtractPort(m[2]),
-			Proto:  ufwExtractProto(m[2]),
-			From:   strings.TrimSpace(m[5]),
-			Raw:    raw,
-			IPv6:   strings.Contains(m[5], "(v6)"),
+			ID:      m[1],
+			Action:  strings.ToLower(m[3]),
+			Port:    ufwExtractPort(m[2]),
+			Proto:   ufwExtractProto(m[2]),
+			From:    strings.TrimSpace(m[5]),
+			Comment: comment,
+			Raw:     strings.TrimSpace(line),
+			IPv6:    strings.Contains(m[5], "(v6)"),
 		})
 	}
 	return rules, nil
@@ -216,12 +230,12 @@ func (f *Firewall) ufwAddLocked(ctx context.Context, r Rule) error {
 	if r.Comment != "" {
 		args = append(args, "comment", r.Comment)
 	}
-	_, err := run(ctx, "ufw", args...)
+	_, err := runCmd(ctx, "ufw", args...)
 	return err
 }
 
 func (f *Firewall) ufwDeleteLocked(ctx context.Context, id string) error {
-	_, err := run(ctx, "ufw", "--force", "delete", id)
+	_, err := runCmd(ctx, "ufw", "--force", "delete", id)
 	return err
 }
 
@@ -230,7 +244,7 @@ func (f *Firewall) ufwSetEnabledLocked(ctx context.Context, on bool) error {
 	if !on {
 		arg = "disable"
 	}
-	_, err := run(ctx, "ufw", "--force", arg)
+	_, err := runCmd(ctx, "ufw", "--force", arg)
 	return err
 }
 
@@ -239,7 +253,7 @@ func (f *Firewall) ufwSnapshotLocked(ctx context.Context) ([]Rule, error) {
 }
 
 func (f *Firewall) ufwRestoreLocked(ctx context.Context, rules []Rule) error {
-	if _, err := run(ctx, "ufw", "--force", "reset"); err != nil {
+	if _, err := runCmd(ctx, "ufw", "--force", "reset"); err != nil {
 		return err
 	}
 	for _, r := range rules {
@@ -247,14 +261,14 @@ func (f *Firewall) ufwRestoreLocked(ctx context.Context, rules []Rule) error {
 			return err
 		}
 	}
-	_, err := run(ctx, "ufw", "--force", "enable")
+	_, err := runCmd(ctx, "ufw", "--force", "enable")
 	return err
 }
 
 // ---------- firewalld ----------
 
 func (f *Firewall) firewalldListLocked(ctx context.Context) ([]Rule, error) {
-	out, err := run(ctx, "firewall-cmd", "--list-ports")
+	out, err := runCmd(ctx, "firewall-cmd", "--list-ports")
 	if err != nil {
 		return nil, err
 	}
@@ -286,10 +300,10 @@ func (f *Firewall) firewalldAddLocked(ctx context.Context, r Rule) error {
 		proto = "tcp"
 	}
 	spec := fmt.Sprintf("%s/%s", r.Port, proto)
-	if _, err := run(ctx, "firewall-cmd", "--permanent", "--add-port="+spec); err != nil {
+	if _, err := runCmd(ctx, "firewall-cmd", "--permanent", "--add-port="+spec); err != nil {
 		return err
 	}
-	_, err := run(ctx, "firewall-cmd", "--reload")
+	_, err := runCmd(ctx, "firewall-cmd", "--reload")
 	return err
 }
 
@@ -303,10 +317,10 @@ func (f *Firewall) firewalldDeleteLocked(ctx context.Context, id string) error {
 		return errors.New("规则不存在")
 	}
 	r := rules[n-1]
-	if _, err := run(ctx, "firewall-cmd", "--permanent", "--remove-port="+r.Raw); err != nil {
+	if _, err := runCmd(ctx, "firewall-cmd", "--permanent", "--remove-port="+r.Raw); err != nil {
 		return err
 	}
-	_, err = run(ctx, "firewall-cmd", "--reload")
+	_, err = runCmd(ctx, "firewall-cmd", "--reload")
 	return err
 }
 
@@ -314,19 +328,26 @@ func (f *Firewall) firewalldSetEnabledLocked(ctx context.Context, on bool) error
 	arg := "--reload"
 	if !on {
 		arg = "--panic-on"
-		if _, err := run(ctx, "firewall-cmd", arg); err != nil {
+		if _, err := runCmd(ctx, "firewall-cmd", arg); err != nil {
 			return err
 		}
 		return nil
 	}
-	_, err := run(ctx, "firewall-cmd", "--panic-off")
+	_, err := runCmd(ctx, "firewall-cmd", "--panic-off")
 	return err
 }
 
 // ---------- iptables ----------
 
+var (
+	reIptDport   = regexp.MustCompile(`--dport (\d+)`)
+	reIptProto   = regexp.MustCompile(`-p (\w+)`)
+	reIptFrom    = regexp.MustCompile(`-s ([\d./]+)`)
+	reIptComment = regexp.MustCompile(`-m comment --comment "([^"]*)"`)
+)
+
 func (f *Firewall) iptablesListLocked(ctx context.Context) ([]Rule, error) {
-	out, err := run(ctx, "iptables", "-S", "INPUT")
+	out, err := runCmd(ctx, "iptables", "-S", "INPUT")
 	if err != nil {
 		return nil, err
 	}
@@ -346,14 +367,17 @@ func (f *Firewall) iptablesListLocked(ctx context.Context) ([]Rule, error) {
 		} else {
 			r.Action = "other"
 		}
-		if m := regexp.MustCompile(`--dport (\d+)`).FindStringSubmatch(line); m != nil {
+		if m := reIptDport.FindStringSubmatch(line); m != nil {
 			r.Port = m[1]
 		}
-		if m := regexp.MustCompile(`-p (\w+)`).FindStringSubmatch(line); m != nil {
+		if m := reIptProto.FindStringSubmatch(line); m != nil {
 			r.Proto = m[1]
 		}
-		if m := regexp.MustCompile(`-s ([\d./]+)`).FindStringSubmatch(line); m != nil {
+		if m := reIptFrom.FindStringSubmatch(line); m != nil {
 			r.From = m[1]
+		}
+		if m := reIptComment.FindStringSubmatch(line); m != nil {
+			r.Comment = m[1]
 		}
 		rules = append(rules, r)
 	}
@@ -371,12 +395,16 @@ func (f *Firewall) iptablesAddLocked(ctx context.Context, r Rule) error {
 	if r.Port != "" {
 		args = append(args, "--dport", r.Port)
 	}
+	// 备注要写在 -j 之前：-m comment 属于匹配扩展，跟 -j 的位置无关但放前面更稳妥
+	if r.Comment != "" {
+		args = append(args, "-m", "comment", "--comment", r.Comment)
+	}
 	if r.Action == "deny" {
 		args = append(args, "-j", "DROP")
 	} else {
 		args = append(args, "-j", "ACCEPT")
 	}
-	_, err := run(ctx, "iptables", args...)
+	_, err := runCmd(ctx, "iptables", args...)
 	return err
 }
 
@@ -389,9 +417,48 @@ func (f *Firewall) iptablesDeleteLocked(ctx context.Context, id string) error {
 	if n < 1 || n > len(rules) {
 		return errors.New("规则不存在")
 	}
-	spec := strings.Fields(strings.TrimPrefix(rules[n-1].Raw, "-A INPUT"))
-	_, err = run(ctx, "iptables", append([]string{"-D", "INPUT"}, spec...)...)
+	// 不能直接用 strings.Fields：备注里带空格时会被切成多个参数，删不掉
+	spec := splitRuleArgs(strings.TrimPrefix(rules[n-1].Raw, "-A INPUT"))
+	_, err = runCmd(ctx, "iptables", append([]string{"-D", "INPUT"}, spec...)...)
 	return err
+}
+
+// splitRuleArgs 按 shell 规则切分参数，引号内的空格保留。
+// iptables -S 输出的备注是 --comment "my note" 这种形态。
+func splitRuleArgs(s string) []string {
+	var (
+		out   []string
+		b     strings.Builder
+		quote byte
+	)
+	flush := func() {
+		if b.Len() > 0 {
+			out = append(out, b.String())
+			b.Reset()
+		}
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case quote != 0:
+			if c == '\\' && i+1 < len(s) {
+				i++
+				b.WriteByte(s[i])
+			} else if c == quote {
+				quote = 0
+			} else {
+				b.WriteByte(c)
+			}
+		case c == '"' || c == '\'':
+			quote = c
+		case c == ' ' || c == '\t':
+			flush()
+		default:
+			b.WriteByte(c)
+		}
+	}
+	flush()
+	return out
 }
 
 // ---------- 对外操作 ----------
