@@ -371,19 +371,55 @@
         <!-- 会话 -->
         <el-tab-pane label="连接会话" name="sessions">
           <div class="card" style="padding: 0">
-            <div class="toolbar" style="padding: 12px 14px 8px">
-              <span class="muted" style="font-size: 12px">
-                来自 information_schema.PROCESSLIST，共 {{ fmtNum(sessions.length) }} 个连接
-              </span>
+            <div class="toolbar" style="padding: 12px 14px 0; margin-bottom: 4px">
+              <el-input
+                v-model="sessionKeyword"
+                size="small"
+                placeholder="账号 / 来源 / 库 / SQL 关键字"
+                clearable
+                style="width: 240px"
+              >
+                <template #prefix><el-icon><Search /></el-icon></template>
+              </el-input>
+              <el-select
+                v-model="sessionCommand"
+                size="small"
+                placeholder="全部状态"
+                clearable
+                style="width: 132px"
+              >
+                <el-option v-for="c in sessionCommands" :key="c" :label="c" :value="c" />
+              </el-select>
+              <el-select
+                v-model="sessionDb"
+                size="small"
+                placeholder="全部库"
+                clearable
+                filterable
+                style="width: 148px"
+              >
+                <el-option v-for="d in sessionDbs" :key="d" :label="d" :value="d" />
+              </el-select>
+              <el-select v-model="sessionMinTime" size="small" style="width: 118px">
+                <el-option v-for="o in sessionTimeOptions" :key="o.value" :label="o.label" :value="o.value" />
+              </el-select>
+              <el-checkbox v-if="sessions.length" v-model="sessionActiveOnly" size="small">仅活跃</el-checkbox>
+              <el-button v-if="sessionFilterActive" size="small" text @click="resetSessionFilter">清空筛选</el-button>
               <div class="spacer"></div>
+              <span class="muted" style="font-size: 12px">
+                共 {{ fmtNum(sessions.length) }} 个连接<template v-if="sessionFilterActive">，匹配 {{ fmtNum(filteredSessions.length) }} 个</template>
+              </span>
               <el-button size="small" :icon="Refresh" :loading="sessionLoading" @click="loadSessions">刷新</el-button>
             </div>
+            <div class="muted" style="padding: 0 14px 8px; font-size: 11.5px">
+              来自 <span class="mono">information_schema.PROCESSLIST</span>
+            </div>
             <el-table
-              :data="sessions"
+              :data="filteredSessions"
               v-loading="sessionLoading"
               size="small"
-              max-height="calc(100vh - 430px)"
-              empty-text="没有会话"
+              max-height="calc(100vh - 462px)"
+              :empty-text="sessionFilterActive ? '没有符合筛选条件的会话' : '没有会话'"
             >
               <el-table-column label="ID" width="86">
                 <template #default="{ row }">
@@ -813,6 +849,64 @@ const rowEditable = computed(
 // 会话
 const sessions = ref<any[]>([])
 const sessionLoading = ref(false)
+const sessionKeyword = ref('')
+const sessionCommand = ref('')
+const sessionDb = ref('')
+const sessionMinTime = ref(0)
+const sessionActiveOnly = ref(false)
+
+const sessionTimeOptions = [
+  { label: '全部时长', value: 0 },
+  { label: '≥ 1 秒', value: 1 },
+  { label: '≥ 10 秒', value: 10 },
+  { label: '≥ 1 分钟', value: 60 },
+  { label: '≥ 5 分钟', value: 300 }
+]
+
+// 状态下拉只列当前真实存在的值，避免列一堆用不上的选项
+const sessionCommands = computed(() => {
+  const set = new Set<string>()
+  for (const s of sessions.value) if (s.command) set.add(s.command)
+  return [...set].sort()
+})
+
+const sessionDbs = computed(() => {
+  const set = new Set<string>()
+  for (const s of sessions.value) if (s.db) set.add(s.db)
+  return [...set].sort()
+})
+
+const sessionFilterActive = computed(
+  () =>
+    !!sessionKeyword.value.trim() ||
+    !!sessionCommand.value ||
+    !!sessionDb.value ||
+    sessionMinTime.value > 0 ||
+    sessionActiveOnly.value
+)
+
+// 会话总量很小（几十条量级），前端过滤即可，不用为筛选再打一次接口
+const filteredSessions = computed(() => {
+  const kw = sessionKeyword.value.trim().toLowerCase()
+  return sessions.value.filter((s) => {
+    if (sessionActiveOnly.value && s.command === 'Sleep') return false
+    if (sessionCommand.value && s.command !== sessionCommand.value) return false
+    if (sessionDb.value && (s.db || '') !== sessionDb.value) return false
+    if (sessionMinTime.value > 0 && Number(s.time || 0) < sessionMinTime.value) return false
+    if (!kw) return true
+    return [s.id, s.user, s.host, s.db, s.command, s.state, s.info].some((v) =>
+      String(v ?? '').toLowerCase().includes(kw)
+    )
+  })
+})
+
+function resetSessionFilter() {
+  sessionKeyword.value = ''
+  sessionCommand.value = ''
+  sessionDb.value = ''
+  sessionMinTime.value = 0
+  sessionActiveOnly.value = false
+}
 
 // SQL 控制台
 const sqlInput = ref('')
@@ -1429,11 +1523,23 @@ async function loadSessions() {
   try {
     const res = await api<any>('/api/mysql/processes')
     sessions.value = res?.items || []
+    pruneSessionFilter()
   } catch (e) {
     sessions.value = []
     ElMessage.error(errMsg(e))
   } finally {
     sessionLoading.value = false
+  }
+}
+
+// 刷新后某些状态 / 库可能已经不存在了（连接断开、库被删），
+// 留着会让列表莫名其妙是空的，这里直接清掉失效的筛选项
+function pruneSessionFilter() {
+  if (sessionCommand.value && !sessionCommands.value.includes(sessionCommand.value)) {
+    sessionCommand.value = ''
+  }
+  if (sessionDb.value && !sessionDbs.value.includes(sessionDb.value)) {
+    sessionDb.value = ''
   }
 }
 
