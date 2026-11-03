@@ -1,6 +1,6 @@
 # Warden
 
-> **守护者** —— 一个二进制，看住你所有的 Linux 服务器。
+> **守护者** —— 一个二进制，守护你所有的 Linux 服务器。
 
 Linux 服务器管理面板。单二进制交付：前端 `go:embed` 进 Go 程序，目标机零依赖。支持单机直管，也支持用一个控制端纳管多台服务器。
 
@@ -13,17 +13,17 @@ Linux 服务器管理面板。单二进制交付：前端 `go:embed` 进 Go 程�
 
 ## 功能
 
-| 模块 | 能力 |
-|---|---|
-| 认证 | 首次启动引导建号、bcrypt、JWT、三级角色（admin/operator/viewer）、登录失败锁定、TOTP、操作审计 |
-| 数据看板 | CPU/负载/内存/Swap/磁盘/网络实时卡片，2s WebSocket 推送，趋势曲线，Top 进程 |
-| 容器管理 | 列表/搜索、启停重启暂停、删除、创建、实时 stats、日志流与下载、exec 交互终端、镜像/卷/网络 |
-| Nacos 服务 | 连接服务端（支持鉴权与命名空间）、服务列表与健康实例、实例详情、配置查询/发布/删除 |
-| Redis 服务 | 连接本机或远程 Redis（密码/ACL/TLS/多库）、运行指标、键浏览（模糊子串检索 / `*` `?` 通配符、按分隔符树形分层）、键内容预览与增删改、过期时间管理、命令台 |
-| 文件管理 | 浏览、上传（流式）、下载、在线编辑、重命名/复制/删除、chmod、zip/tar 压缩解压，路径沙箱防穿越 |
-| 系统管理 | 防火墙规则 CRUD（ufw/firewalld/iptables 自动探测）、端口放行封禁、危险操作 30s 未确认自动回滚、进程管理（实时采样、多字段排序、结束/强杀）、本地 PTY 终端、SSH 跳板终端 |
-| 网站监控 | HTTP/HTTPS/TCP/关键字/证书到期探测，可用率与响应时间曲线，企业微信/钉钉/飞书/邮件告警 |
-| 多主机 | 主机台账、Agent 令牌、在线探测、一键切换视角，切换后所有页面跟随目标主机 |
+| 模块       | 能力                                                                                                                                                                    |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 认证       | 首次启动引导建号、bcrypt、JWT、三级角色（admin/operator/viewer）、登录失败锁定、TOTP、操作审计                                                                          |
+| 数据看板   | CPU/负载/内存/Swap/磁盘/网络实时卡片，2s WebSocket 推送，趋势曲线，Top 进程                                                                                             |
+| 容器管理   | 列表/搜索、启停重启暂停、删除、创建、实时 stats、日志流与下载、exec 交互终端、镜像/卷/网络                                                                              |
+| Nacos 服务 | 连接服务端（支持鉴权与命名空间）、服务列表与健康实例、实例详情、配置查询/发布/删除                                                                                      |
+| Redis 服务 | 连接本机或远程 Redis（密码/ACL/TLS/多库）、运行指标、键浏览（模糊子串检索 / `*` `?` 通配符、按分隔符树形分层）、键内容预览与增删改、过期时间管理、命令台            |
+| 文件管理   | 浏览、上传（流式）、下载、在线编辑、重命名/复制/删除、chmod、zip/tar 压缩解压，路径沙箱防穿越                                                                           |
+| 系统管理   | 防火墙规则 CRUD（ufw/firewalld/iptables 自动探测）、端口放行封禁、危险操作 30s 未确认自动回滚、进程管理（实时采样、多字段排序、结束/强杀）、终端管理（Linux 本机 Shell / Windows PowerShell 与 CMD、SSH 跳板终端） |
+| 网站监控   | HTTP/HTTPS/TCP/关键字/证书到期探测，可用率与响应时间曲线，企业微信/钉钉/飞书/邮件告警                                                                                   |
+| 多主机     | 主机台账、Agent 令牌、在线探测、一键切换视角，切换后所有页面跟随目标主机                                                                                                |
 
 ## 快速开始（单机）
 
@@ -90,16 +90,16 @@ go test ./...  # 单元测试：路径穿越、zip slip、AES、TOTP、防火墙
 双击或命令行运行均可，产物统一在 `dist\`，文件名形如 `warden-linux-amd64`。
 同一份二进制既是控制端也是被管端，靠 `-mode` 区分。
 
-| 命令 | 说明 |
-|---|---|
-| `build.bat` | 构建全部平台：windows / linux / darwin × amd64 + arm64 |
-| `build.bat linux` | 只构建 linux/amd64 与 linux/arm64 |
-| `build.bat linux/arm64` | 只构建单个目标，可写 `windows/amd64`、`darwin/arm64` 等 |
-| `build.bat -Pack` | 额外打 zip（二进制 + `config.yaml` + `deploy/`） |
-| `build.bat -Version 1.2.0` | 注入版本号，`warden -version` 可查看 |
-| `build.bat -SkipWeb` | 跳过前端构建，复用现有 `web/dist` |
-| `build.bat -Clean` | 构建前清空 `dist\` |
-| `build.bat -h` | 查看帮助 |
+| 命令                         | 说明                                                        |
+| ---------------------------- | ----------------------------------------------------------- |
+| `build.bat`                | 构建全部平台：windows / linux / darwin × amd64 + arm64     |
+| `build.bat linux`          | 只构建 linux/amd64 与 linux/arm64                           |
+| `build.bat linux/arm64`    | 只构建单个目标，可写 `windows/amd64`、`darwin/arm64` 等 |
+| `build.bat -Pack`          | 额外打 zip（二进制 + `config.yaml` + `deploy/`）        |
+| `build.bat -Version 1.2.0` | 注入版本号，`warden -version` 可查看                      |
+| `build.bat -SkipWeb`       | 跳过前端构建，复用现有 `web/dist`                         |
+| `build.bat -Clean`         | 构建前清空 `dist\`                                        |
+| `build.bat -h`             | 查看帮助                                                    |
 
 说明：
 
@@ -112,16 +112,16 @@ go test ./...  # 单元测试：路径穿越、zip slip、AES、TOTP、防火墙
 
 优先级：命令行参数 > 环境变量（`WARDEN_` 前缀）> `config.yaml` > 默认值。
 
-| 字段 | 环境变量 | 说明 |
-|---|---|---|
-| `mode` | `WARDEN_MODE` | `server` / `agent` |
-| `listen` | `WARDEN_LISTEN` | 控制端监听地址 |
-| `data_dir` | `WARDEN_DATA_DIR` | 数据目录（SQLite + 密钥） |
-| `file_root` | `WARDEN_FILE_ROOT` | 文件管理根目录，建议收窄到 `/data` |
-| `agent_listen` | `WARDEN_AGENT_LISTEN` | Agent 监听地址，默认 `:8090` |
-| `agent_token` | `WARDEN_AGENT_TOKEN` | Agent 令牌，必须与控制端登记一致 |
-| `cert_file` / `key_file` | `WARDEN_CERT_FILE` / `WARDEN_KEY_FILE` | 启用 HTTPS |
-| `auto_open_port` | `WARDEN_AUTO_OPEN_PORT` | 启动时自动在防火墙放行监听端口，默认 `true` |
+| 字段                         | 环境变量                                   | 说明                                          |
+| ---------------------------- | ------------------------------------------ | --------------------------------------------- |
+| `mode`                     | `WARDEN_MODE`                            | `server` / `agent`                        |
+| `listen`                   | `WARDEN_LISTEN`                          | 控制端监听地址                                |
+| `data_dir`                 | `WARDEN_DATA_DIR`                        | 数据目录（SQLite + 密钥）                     |
+| `file_root`                | `WARDEN_FILE_ROOT`                       | 文件管理根目录，建议收窄到 `/data`          |
+| `agent_listen`             | `WARDEN_AGENT_LISTEN`                    | Agent 监听地址，默认 `:8090`                |
+| `agent_token`              | `WARDEN_AGENT_TOKEN`                     | Agent 令牌，必须与控制端登记一致              |
+| `cert_file` / `key_file` | `WARDEN_CERT_FILE` / `WARDEN_KEY_FILE` | 启用 HTTPS                                    |
+| `auto_open_port`           | `WARDEN_AUTO_OPEN_PORT`                  | 启动时自动在防火墙放行监听端口，默认 `true` |
 
 `auto_open_port` 的行为：控制端放行 `listen`，被管端放行 `agent_listen`。只新增一条 `allow` 规则，
 **不会启停防火墙、不改动已有规则**，重复启动不会产生重复规则（已存在则跳过）。需要 root 权限；
@@ -150,6 +150,7 @@ deploy/                       systemd unit 与安装脚本
 ```
 
 ## 安全说明
+
 - 本程序仅供测试使用，安全问题本程序作者概不负责。
 - 所有写接口都经 RBAC 校验，并落审计日志；远程主机的操作会在审计详情里标注主机名。
 - 文件访问被限制在 `file_root` 内，路径穿越与 zip slip 均有测试覆盖。
