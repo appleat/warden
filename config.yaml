@@ -37,7 +37,10 @@ auto_open_port: true
 # Docker，推荐把被管端 Agent 装在 WSL 内、用多主机方式接入；或者让 WSL 内的 dockerd
 # 额外监听 TCP（-H tcp://127.0.0.1:2375，务必只绑回环地址）后在此填 tcp://127.0.0.1:2375。
 docker_host: ""
-# 留空自动探测 $SHELL 或 /bin/bash
+# 本机终端使用的 shell，留空自动探测：
+#   Linux            → $SHELL（退回 /bin/bash）
+#   Windows          → PowerShell（有 pwsh 时也可在页面上切到 PowerShell 7 / CMD）
+# 也可写死路径，如 /usr/bin/zsh 或 C:\Program Files\PowerShell\7\pwsh.exe
 shell: ""
 
 # ---------- 定时备份 ----------

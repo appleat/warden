@@ -183,6 +183,9 @@ func NewRouter(d *Deps) *gin.Engine {
 		ha.DELETE("/files", middleware.RequireRole(auth.RoleOperator), d.deleteFile)
 
 		ha.GET("/system/info", d.systemInfo)
+		// 本机终端的可选 shell（Windows 是 PowerShell / CMD，Linux 是 bash / zsh …）。
+		// 挂 HostProxy 是为了跟随顶部所选主机，返回那台机器真实的 shell 列表。
+		ha.GET("/system/terminal/shells", d.terminalShells)
 		ha.GET("/system/processes", d.processList)
 		ha.POST("/system/processes/kill", middleware.RequireRole(auth.RoleOperator), d.processKill)
 		ha.GET("/system/firewall", d.firewallStatus)

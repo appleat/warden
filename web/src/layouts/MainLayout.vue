@@ -218,7 +218,7 @@ const navGroups: { title: string; items: NavItem[] }[] = [
           { name: '文件管理', path: '/files' },
           { name: '进程管理', path: '/system/processes' },
           { name: '防火墙管理', path: '/system/firewall' },
-          { name: 'SSH 终端管理', path: '/system/terminal' }
+          { name: '终端管理', path: '/system/terminal' }
         ]
       }
     ]

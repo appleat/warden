@@ -2,6 +2,8 @@ package api
 
 import (
 	"net/http"
+	"path/filepath"
+	"runtime"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -220,4 +222,38 @@ func (d *Deps) deleteSSHHost(c *gin.Context) {
 		return
 	}
 	httpx.OKMsg(c, "已删除", nil)
+}
+
+// terminalShells 返回本机可用的交互式 shell，供「终端管理 → 本机终端」下拉选择。
+// 这里的「本机」指真正执行命令的那一端：本机模式下是控制端，
+// 远程主机模式下会被 HostProxy 转发给 Agent，因此返回的是那台主机的 OS 与 shell。
+func (d *Deps) terminalShells(c *gin.Context) {
+	opts := system.LocalShells()
+	def := system.DefaultShellID()
+
+	// config.yaml 里显式配置的 shell 也列出来，方便用自定义路径（如 git-bash、nushell）
+	if s := d.Cfg.Shell; s != "" {
+		found := false
+		for _, o := range opts {
+			if o.Path == s || o.ID == s {
+				found = true
+				def = o.ID
+				break
+			}
+		}
+		if !found {
+			opts = append([]system.ShellOption{{
+				ID:   s,
+				Name: filepath.Base(s) + "（配置）",
+				Path: s,
+			}}, opts...)
+			def = s
+		}
+	}
+
+	httpx.OK(c, gin.H{
+		"platform": runtime.GOOS,
+		"default":  def,
+		"shells":   opts,
+	})
 }

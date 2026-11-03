@@ -39,6 +39,17 @@
             <el-radio-button label="local">本机终端</el-radio-button>
             <el-radio-button label="ssh">远程 SSH</el-radio-button>
           </el-radio-group>
+          <!-- 本机终端：Windows 下是 PowerShell / CMD，Linux 下是 bash / zsh 等 -->
+          <el-select
+            v-if="termMode === 'local' && localShells.length > 0"
+            v-model="termShell"
+            size="small"
+            style="width: 168px"
+            placeholder="选择 Shell"
+            @change="pickShell"
+          >
+            <el-option v-for="s in localShells" :key="s.id" :label="s.name" :value="s.id" />
+          </el-select>
           <el-select
             v-if="termMode === 'ssh'"
             v-model="termHost"
@@ -50,7 +61,7 @@
             <el-option v-for="h in hosts" :key="h.id" :label="`${h.name} · ${h.host}`" :value="h.id" />
           </el-select>
           <div class="spacer"></div>
-          <span class="muted" style="font-size: 11.5px">支持 Ctrl+C / vim / htop 等全交互程序</span>
+          <span class="muted" style="font-size: 11.5px">{{ termHint }}</span>
           <el-button
             size="small"
             :type="filesOpen ? 'primary' : 'default'"
@@ -64,13 +75,7 @@
 
         <div class="term-split">
           <div class="term-main">
-            <XTerm
-              v-if="termUrl"
-              ref="termRef"
-              :key="termKey"
-              :url="termUrl"
-              :title="termMode === 'local' ? '本机 Shell' : 'SSH 会话'"
-            />
+            <XTerm v-if="termUrl" ref="termRef" :key="termKey" :url="termUrl" :title="termTitle" />
             <div v-else class="card empty-hint">请选择一台主机后打开终端</div>
           </div>
 
@@ -152,7 +157,7 @@ import { activeHost } from '../hosts'
 const route = useRoute()
 const router = useRouter()
 
-// 页签由路由决定：导航里的「SSH 终端管理」直接落到终端页签
+// 页签由路由决定：导航里的「终端管理」直接落到终端页签
 function tabOf(p: string) {
   return p.endsWith('/ssh') ? 'ssh' : 'terminal'
 }
@@ -185,11 +190,55 @@ const hostForm = reactive<any>({
 const termMode = ref('local')
 const termHost = ref<number | null>(null)
 const termKey = ref(0)
+
+// ---------- 本机终端 ----------
+// 后端返回的是「真正执行命令那一端」的 OS 与可用 shell：
+// 本机模式是控制端，远程主机模式是那台主机的 Agent。
+const termPlatform = ref('')
+const localShells = ref<{ id: string; name: string; path: string }[]>([])
+const termShell = ref('')
+
 const termUrl = computed(() => {
-  if (termMode.value === 'local') return wsURL('/ws/terminal/local')
+  if (termMode.value === 'local') {
+    return wsURL('/ws/terminal/local', termShell.value ? { shell: termShell.value } : {})
+  }
   if (!termHost.value) return ''
   return wsURL('/ws/terminal/ssh', { id: termHost.value })
 })
+
+// 终端标题写清具体是哪个 shell，Windows 上一眼能看出是 PowerShell 还是 CMD
+const termTitle = computed(() => {
+  if (termMode.value === 'ssh') return 'SSH 会话'
+  const s = localShells.value.find((x) => x.id === termShell.value)
+  return s ? `本机 ${s.name}` : '本机终端'
+})
+
+const termHint = computed(() =>
+  termPlatform.value === 'windows'
+    ? '支持 Ctrl+C / Tab 补全 / 方向键历史等交互操作'
+    : '支持 Ctrl+C / vim / htop 等全交互程序'
+)
+
+async function loadShells() {
+  try {
+    const r = await api<any>('/api/system/terminal/shells')
+    termPlatform.value = r.platform || ''
+    localShells.value = r.shells || []
+    // 记住上次选的 shell，但换了主机后要确认这台机器上确实有
+    const saved = localStorage.getItem('warden.termShell')
+    const hit = saved && localShells.value.some((s) => s.id === saved)
+    termShell.value = hit ? (saved as string) : r.default || localShells.value[0]?.id || ''
+  } catch {
+    // 老版本 Agent 没有这个接口：不显示下拉，仍按平台默认 shell 打开
+    termPlatform.value = ''
+    localShells.value = []
+  }
+}
+
+function pickShell(v: string) {
+  localStorage.setItem('warden.termShell', v)
+  resetTerm()
+}
 
 function resetTerm() {
   termKey.value++
@@ -340,7 +389,11 @@ async function delHost(row: any) {
 
 onMounted(() => {
   loadHosts()
+  loadShells()
 })
+
+// 切换「纳管主机」后 shell 列表要跟着变：另一台机器可能是 Linux，也可能只有 CMD
+watch(activeHost, () => loadShells())
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onWinResize)

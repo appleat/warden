@@ -208,12 +208,18 @@ func bridgeTerminal(conn *websocket.Conn, term system.Term) {
 func (d *Deps) wsLocalTerminal(c *gin.Context) {
 	cols, _ := strconv.Atoi(c.DefaultQuery("cols", "100"))
 	rows, _ := strconv.Atoi(c.DefaultQuery("rows", "30"))
+	// shell 由前端下拉传入（Windows: powershell / cmd，Linux: bash / zsh …）；
+	// 没传时用配置里的值，配置也留空就按平台自动挑一个。
+	shell := c.Query("shell")
+	if shell == "" {
+		shell = d.Cfg.Shell
+	}
 
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return
 	}
-	term, err := system.StartLocalShell(d.Cfg.Shell)
+	term, err := system.StartLocalShell(shell)
 	if err != nil {
 		writeNotice(conn, err.Error())
 		time.Sleep(300 * time.Millisecond)

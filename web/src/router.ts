@@ -65,7 +65,7 @@ const routes = [
       {
         path: 'system/terminal',
         component: () => import('./views/System.vue'),
-        meta: { title: 'SSH 终端管理', desc: '本机 Shell 与远程 SSH 会话' }
+        meta: { title: '终端管理', desc: '本机终端（PowerShell / CMD / Shell）与远程 SSH 会话' }
       },
       {
         path: 'monitor',
