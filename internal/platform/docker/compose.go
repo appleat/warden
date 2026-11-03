@@ -108,6 +108,21 @@ func (s *Service) stackInfo(ctx context.Context, project string) (string, []stri
 	return "", nil, fmt.Errorf("未找到 compose 项目 %q 的容器，或容器缺少文件位置标签（可能不是通过 docker compose 启动）", project)
 }
 
+// composePathErr 把「读不到 compose 文件」翻译成能照着做的提示。
+//
+// 跨系统时（Windows 上的 Warden 管 WSL 里的 Docker）容器标签给的是虚拟机内部路径，
+// 宿主机进程根本看不到，裸 os 错误会让人误以为文件被删了。
+func composePathErr(action, path string, err error) error {
+	if !os.IsNotExist(err) {
+		return fmt.Errorf("%s失败: %w", action, err)
+	}
+	if goos == "windows" && strings.HasPrefix(path, "/") {
+		return fmt.Errorf("%s失败：%s 是 WSL/Linux 虚拟机内部的路径，Windows 侧进程读不到。"+
+			"如需编辑 Compose，请把被管端 Agent 装在 WSL 内，用多主机方式接入后再操作", action, path)
+	}
+	return fmt.Errorf("%s失败：%s 不存在（文件可能已被移动或删除）", action, path)
+}
+
 // ComposeFile 读取堆栈的主配置文件内容。多个文件时优先选 docker-compose.yml / compose.yaml。
 func (s *Service) ComposeFile(ctx context.Context, project string) (*ComposeFileData, error) {
 	wd, files, err := s.stackInfo(ctx, project)
@@ -123,7 +138,7 @@ func (s *Service) ComposeFile(ctx context.Context, project string) (*ComposeFile
 	}
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("读取 compose 文件失败: %w", err)
+		return nil, composePathErr("读取 compose 文件", path, err)
 	}
 	return &ComposeFileData{
 		Project:     project,
@@ -162,6 +177,16 @@ func (s *Service) ComposeUp(ctx context.Context, project string) (string, error)
 	if err != nil {
 		return "", err
 	}
+	// compose 要用工作目录当 cwd、要能读到配置文件，先探一下再跑命令，
+	// 否则跨系统场景只会得到一句 "chdir ...: no such file or directory"。
+	if _, err := os.Stat(wd); err != nil {
+		return "", composePathErr("进入 compose 工作目录", wd, err)
+	}
+	for _, f := range files {
+		if _, err := os.Stat(f); err != nil {
+			return "", composePathErr("读取 compose 文件", f, err)
+		}
+	}
 
 	var bin string
 	var baseArgs []string
@@ -176,6 +201,10 @@ func (s *Service) ComposeUp(ctx context.Context, project string) (string, error)
 			bin = legacy
 			baseArgs = []string{}
 		} else {
+			if goos == "windows" {
+				return "", errors.New("未找到可用的 docker compose：Windows 需安装并启动 Docker Desktop，" +
+					"并确保 docker.exe 在 PATH 中（compose 是它的内置插件）")
+			}
 			return "", errors.New("未找到可用的 docker compose（需要 docker CLI 的 compose 插件，或独立的 docker-compose 命令）")
 		}
 	}

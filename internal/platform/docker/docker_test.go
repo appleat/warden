@@ -1,7 +1,9 @@
 package docker
 
 import (
+	"context"
 	"encoding/json"
+	"io/fs"
 	"runtime"
 	"strings"
 	"testing"
@@ -160,5 +162,126 @@ func TestDedupePorts(t *testing.T) {
 	}
 	if got[2].PublicPort != 0 || got[2].PrivatePort != 9600 {
 		t.Fatalf("未发布端口解析错误: %+v", got[2])
+	}
+}
+
+// ---------- 跨平台端点与提示 ----------
+
+// withGOOS 临时切换平台判断，让 Windows / Linux 两条分支都能被覆盖。
+func withGOOS(t *testing.T, v string) {
+	t.Helper()
+	old := goos
+	goos = v
+	t.Cleanup(func() { goos = old })
+}
+
+// 没配 docker_host 时，端点必须跟着平台走：Windows 是 npipe，Linux/WSL 是 unix socket。
+func TestDefaultEndpointFollowsPlatform(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "")
+	withGOOS(t, "windows")
+	if got := defaultEndpoint(); got != "npipe:////./pipe/docker_engine" {
+		t.Fatalf("Windows 默认端点应为 npipe，实际 %q", got)
+	}
+	withGOOS(t, "linux")
+	if got := defaultEndpoint(); got != "unix:///var/run/docker.sock" {
+		t.Fatalf("Linux 默认端点应为 unix socket，实际 %q", got)
+	}
+}
+
+// DOCKER_HOST 环境变量的优先级高于平台默认值（Docker Desktop 与远程 daemon 都靠它）。
+func TestDefaultEndpointRespectsEnv(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "tcp://10.0.0.9:2375")
+	withGOOS(t, "windows")
+	if got := defaultEndpoint(); got != "tcp://10.0.0.9:2375" {
+		t.Fatalf("应优先使用 DOCKER_HOST，实际 %q", got)
+	}
+}
+
+func TestEndpointPrefersConfiguredHost(t *testing.T) {
+	s := New("  tcp://10.0.0.5:2375  ")
+	if got := s.Endpoint(); got != "tcp://10.0.0.5:2375" {
+		t.Fatalf("应使用配置的 docker_host 且去掉首尾空格，实际 %q", got)
+	}
+}
+
+// 提示语不能写死 Linux：Windows 上提 systemctl 只会误导人。
+func TestUnreachableHintMentionsPlatformTool(t *testing.T) {
+	withGOOS(t, "windows")
+	h := unreachableHint()
+	if !strings.Contains(h, "Docker Desktop") || strings.Contains(h, "systemctl") {
+		t.Fatalf("Windows 提示应提 Docker Desktop 且不提 systemctl，实际 %q", h)
+	}
+	withGOOS(t, "linux")
+	h = unreachableHint()
+	if !strings.Contains(h, "systemctl") || strings.Contains(h, "Docker Desktop") {
+		t.Fatalf("Linux 提示应提 systemctl，实际 %q", h)
+	}
+}
+
+// Windows 的 Go 运行时没有 unix socket，配置成 /var/run/docker.sock 一定连不上，
+// 必须提前拦下并指向 npipe，而不是等 dial 报一句 no such file。
+func TestClientRejectsUnixSocketOnWindows(t *testing.T) {
+	withGOOS(t, "windows")
+	s := New("unix:///var/run/docker.sock")
+	_, err := s.Client()
+	if err == nil {
+		t.Fatal("Windows 上配置 unix socket 应当直接报错")
+	}
+	if !strings.Contains(err.Error(), "unix socket") {
+		t.Fatalf("错误应说清是 unix socket 不可用，实际 %q", err.Error())
+	}
+	// 替代方案放在 hint 里，不和错误文案重复
+	if h := s.lastHint(); !strings.Contains(h, "npipe") {
+		t.Fatalf("提示里应给出 npipe 的替代方案，实际 %q", h)
+	}
+}
+
+// Error 说现象、Hint 说怎么做，两者不能是同一句话，否则界面上会出现两段重复文字。
+func TestStatusSeparatesErrorAndHint(t *testing.T) {
+	withGOOS(t, "windows")
+	st := New("unix:///var/run/docker.sock").Status(context.Background())
+	if st.Error == "" || st.Hint == "" {
+		t.Fatalf("错误与提示都应有内容，实际 error=%q hint=%q", st.Error, st.Hint)
+	}
+	if st.Error == st.Hint {
+		t.Fatalf("错误与提示不应重复：%q", st.Error)
+	}
+	if st.Platform != "windows" {
+		t.Fatalf("应带回平台标识，实际 %q", st.Platform)
+	}
+	if st.ServerEnd != "unix:///var/run/docker.sock" {
+		t.Fatalf("连不上时也应显示尝试过的端点，实际 %q", st.ServerEnd)
+	}
+}
+
+// compose 文件在 WSL 虚拟机内时，Windows 侧读不到，提示必须说清原因而不是裸 os 错误。
+func TestComposePathErrExplainsWSLPath(t *testing.T) {
+	withGOOS(t, "windows")
+	err := composePathErr("读取 compose 文件", "/home/deploy/stack/docker-compose.yml", fs.ErrNotExist)
+	msg := err.Error()
+	if !strings.Contains(msg, "WSL") || !strings.Contains(msg, "/home/deploy/stack/docker-compose.yml") {
+		t.Fatalf("Windows 下应说明是 WSL 内部路径并带上原路径，实际 %q", msg)
+	}
+	withGOOS(t, "linux")
+	err = composePathErr("读取 compose 文件", "/home/deploy/stack/docker-compose.yml", fs.ErrNotExist)
+	msg = err.Error()
+	if strings.Contains(msg, "WSL") {
+		t.Fatalf("Linux 下不该提 WSL，实际 %q", msg)
+	}
+	if !strings.Contains(msg, "不存在") {
+		t.Fatalf("Linux 下应说明文件不存在，实际 %q", msg)
+	}
+}
+
+// 非「文件不存在」的错误（权限、IO）不能被改写成「路径读不到」，否则会掩盖真实原因。
+func TestComposePathErrKeepsOtherErrors(t *testing.T) {
+	withGOOS(t, "windows")
+	err := composePathErr("写入 compose 文件", "/home/x/docker-compose.yml", fs.ErrPermission)
+	msg := err.Error()
+	if !strings.Contains(msg, "permission denied") {
+		t.Fatalf("应保留原始错误，实际 %q", msg)
+	}
+	if strings.Contains(msg, "WSL") {
+		t.Fatalf("权限错误不该被说成路径不可达，实际 %q", msg)
 	}
 }

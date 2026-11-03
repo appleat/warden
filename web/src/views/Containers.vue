@@ -6,8 +6,14 @@
         <div>
           <div style="font-weight: 500; margin-bottom: 3px">Docker 暂不可用</div>
           <div class="muted" style="font-size: 12px; line-height: 1.7">{{ dockerErr }}</div>
-          <div class="muted" style="font-size: 11.5px; margin-top: 4px">
-            请确认 Docker 已启动，且当前用户有访问 <code class="mono">/var/run/docker.sock</code> 的权限
+          <div class="muted" style="font-size: 11.5px; margin-top: 4px">{{ dockerHint }}</div>
+          <!-- 后端返回的错误里通常已经带了端点，重复显示只是噪音 -->
+          <div
+            v-if="dockerEndpoint && !dockerErr.includes(dockerEndpoint)"
+            class="muted mono"
+            style="font-size: 11.5px; margin-top: 2px"
+          >
+            当前端点：{{ dockerEndpoint }}
           </div>
         </div>
       </div>
@@ -55,9 +61,18 @@
           </el-tag>
           <span v-if="g.dir" class="muted mono stack-dir">{{ g.dir }}</span>
           <div class="spacer"></div>
-          <el-button v-if="g.stack" size="small" @click.stop="openCompose(g.stack)">
-            <el-icon style="margin-right: 4px"><EditPen /></el-icon>编辑 Compose
-          </el-button>
+          <el-tooltip
+            v-if="g.stack"
+            :disabled="!composeUnreachable(g.dir)"
+            content="该堆栈的 compose 文件位于 WSL / Linux 虚拟机内，Windows 侧进程读不到；请在被管端（WSL 内）的 Agent 上操作"
+            placement="top"
+          >
+            <span>
+              <el-button size="small" :disabled="composeUnreachable(g.dir)" @click.stop="openCompose(g.stack)">
+                <el-icon style="margin-right: 4px"><EditPen /></el-icon>编辑 Compose
+              </el-button>
+            </span>
+          </el-tooltip>
         </div>
         <el-table
           v-show="!collapsedGroups[g.key]"
@@ -410,6 +425,18 @@ const networks = ref<any[]>([])
 const volumes = ref<any[]>([])
 const loading = ref(false)
 const dockerErr = ref('')
+// Docker 端点与平台由后端带回：Windows 是 npipe，Linux/WSL 是 unix socket，
+// 提示语不能写死成 /var/run/docker.sock，否则在 Windows 上会指错方向。
+const dockerEndpoint = ref('')
+const dockerPlatform = ref('')
+const dockerHintText = ref('')
+const dockerHint = computed(() => {
+  if (dockerHintText.value) return dockerHintText.value
+  if (dockerPlatform.value === 'windows') {
+    return '请确认 Docker Desktop 已启动，且当前用户有访问 npipe:////./pipe/docker_engine 的权限'
+  }
+  return '请确认 Docker 已启动，且当前用户有访问 /var/run/docker.sock 的权限'
+})
 const q = ref('')
 // 容器状态筛选：all 全部 / running 运行中 / stopped 已停止（非 running 都算）
 const stateFilter = ref<'all' | 'running' | 'stopped'>('all')
@@ -593,6 +620,12 @@ const composeContent = ref('')
 const composeLog = ref('')
 const composeBusy = ref(false)
 
+// Windows 侧进程读不到 WSL 虚拟机内的路径，这类堆栈的 Compose 文件必然打不开，
+// 提前把按钮置灰，比让人点了再看一句 no such file or directory 好。
+function composeUnreachable(dir?: string) {
+  return dockerPlatform.value === 'windows' && !!dir && dir.startsWith('/')
+}
+
 async function openCompose(project: string) {
   composeProject.value = project
   composePath.value = ''
@@ -646,6 +679,9 @@ async function fetchList(silent: boolean) {
   dockerErr.value = ''
   try {
     const st = await api<any>('/api/docker/status')
+    dockerEndpoint.value = st.endpoint || ''
+    dockerPlatform.value = st.platform || ''
+    dockerHintText.value = st.hint || ''
     if (!st.available) {
       // Docker 不可用时不必再请求容器列表，避免无意义的报错
       dockerErr.value = st.error || '无法连接 Docker'

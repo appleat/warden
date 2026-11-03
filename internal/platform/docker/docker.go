@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"runtime"
 	"sort"
 	"strings"
@@ -25,10 +26,62 @@ type Service struct {
 
 	mu  sync.Mutex
 	cli *client.Client
+	// hint 是最近一次连接失败的排查建议。Error 只说现象，Hint 说怎么做，
+	// 两者分开存，界面上一行现象一行建议，不会重复成两段一样的话。
+	hint string
 }
 
 func New(host string) *Service {
-	return &Service{host: host}
+	return &Service{host: strings.TrimSpace(host)}
+}
+
+// goos 是 runtime.GOOS 的副本，单独拎出来是为了让「Windows / Linux 提示语不同」
+// 这类分支能被测试覆盖——否则只能在一个平台上验到一半。
+var goos = runtime.GOOS
+
+// defaultEndpoint 是未配置 docker_host 时 SDK 会用的默认端点。
+// Docker Desktop（Windows / macOS）走命名管道或用户目录下的 socket，
+// Linux 与 WSL 里的原生 Docker 走 /var/run/docker.sock。
+func defaultEndpoint() string {
+	if v := os.Getenv("DOCKER_HOST"); v != "" {
+		return v
+	}
+	if goos == "windows" {
+		return "npipe:////./pipe/docker_engine"
+	}
+	return "unix:///var/run/docker.sock"
+}
+
+// Endpoint 返回本进程会去连接的 Docker 端点，用于在界面上说明「连的是哪里」。
+func (s *Service) Endpoint() string {
+	if s.host != "" {
+		return s.host
+	}
+	return defaultEndpoint()
+}
+
+// unreachableHint 按平台给出排查建议。
+// Windows 上没有 docker.sock，写死 Linux 的提示只会误导人。
+func unreachableHint() string {
+	if goos == "windows" {
+		return "请确认 Docker Desktop 已启动（默认端点 npipe:////./pipe/docker_engine）；" +
+			"若 Docker 只跑在 WSL 里，推荐把被管端 Agent 装在 WSL 内接入，" +
+			"或让 WSL 内的 dockerd 监听 TCP 后把 docker_host 指向它（务必只绑 127.0.0.1）"
+	}
+	return "请确认 `systemctl status docker` 正常且 /var/run/docker.sock 存在"
+}
+
+func permissionHint() string {
+	if goos == "windows" {
+		return "请确认当前用户属于 docker-users 组（Docker Desktop 设置 → Resources → Advanced），或改用管理员身份运行"
+	}
+	return "请将当前用户加入 docker 组，或以 root 运行本服务"
+}
+
+// fail 记录排查建议并返回「现象 + 端点」的错误，避免 Error 与 Hint 说同一句话。
+func (s *Service) fail(msg string, hint string) error {
+	s.hint = hint
+	return errors.New(msg)
 }
 
 func (s *Service) Client() (*client.Client, error) {
@@ -36,6 +89,13 @@ func (s *Service) Client() (*client.Client, error) {
 	defer s.mu.Unlock()
 	if s.cli != nil {
 		return s.cli, nil
+	}
+	// Windows 的 Go 运行时没有 unix socket 支持，配成 /var/run/docker.sock 一定连不上。
+	// 这种写法通常是想连 WSL 里那台 Docker，得靠命名管道或 TCP 转发，提前说清楚比等
+	// dial 报一句 "connect: no such file or directory" 有用得多。
+	if goos == "windows" && strings.HasPrefix(strings.ToLower(s.host), "unix://") {
+		return nil, s.fail(fmt.Sprintf("docker_host=%q 是 Linux 的 unix socket，Windows 进程无法访问", s.host),
+			"请改用 npipe:////./pipe/docker_engine，或把被管端 Agent 装在 WSL 内让它去连这个 socket")
 	}
 	opts := []client.Opt{client.WithAPIVersionNegotiation()}
 	if s.host != "" {
@@ -45,6 +105,7 @@ func (s *Service) Client() (*client.Client, error) {
 	}
 	cli, err := client.NewClientWithOpts(opts...)
 	if err != nil {
+		s.hint = ""
 		return nil, fmt.Errorf("初始化 Docker 客户端失败: %w", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -53,15 +114,16 @@ func (s *Service) Client() (*client.Client, error) {
 		msg := err.Error()
 		switch {
 		case strings.Contains(msg, "cannot find the file") || strings.Contains(msg, "no such file"):
-			return nil, errors.New("未检测到运行中的 Docker。Linux 请确认 `systemctl status docker` 正常且 /var/run/docker.sock 存在")
+			return nil, s.fail("未检测到运行中的 Docker（"+s.Endpoint()+" 不存在）", unreachableHint())
 		case strings.Contains(msg, "permission denied") || strings.Contains(msg, "Access is denied"):
-			return nil, errors.New("无权限访问 Docker socket，请将当前用户加入 docker 组，或以 root 运行本服务")
+			return nil, s.fail("无权限访问 Docker 端点（"+s.Endpoint()+"）", permissionHint())
 		case strings.Contains(msg, "connection refused"):
-			return nil, errors.New("Docker 守护进程未监听，请先启动 Docker 服务")
+			return nil, s.fail("Docker 守护进程未监听（"+s.Endpoint()+"）", "请先启动 Docker 服务")
 		}
-		return nil, fmt.Errorf("无法连接 Docker 守护进程: %s", msg)
+		return nil, s.fail("无法连接 Docker 守护进程（"+s.Endpoint()+"）: "+msg, unreachableHint())
 	}
 	s.cli = cli
+	s.hint = ""
 	return cli, nil
 }
 
@@ -78,13 +140,27 @@ type Status struct {
 	Error       string `json:"error"`
 	ServerEnd   string `json:"endpoint"`
 	DockerReady bool   `json:"docker_ready"`
+	// Platform 是运行本进程的系统（linux / windows / darwin），
+	// 前端据此显示对应的排查提示，而不是一律提 /var/run/docker.sock。
+	Platform string `json:"platform"`
+	// Configured 是配置里显式写的 docker_host，空串表示走平台默认端点。
+	Configured string `json:"docker_host"`
+	Hint       string `json:"hint"`
+}
+
+// lastHint 返回最近一次连接失败时记下的排查建议。
+func (s *Service) lastHint() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hint
 }
 
 func (s *Service) Status(ctx context.Context) Status {
-	st := Status{}
+	st := Status{Platform: goos, Configured: s.host, ServerEnd: s.Endpoint()}
 	cli, err := s.Client()
 	if err != nil {
 		st.Error = err.Error()
+		st.Hint = s.lastHint()
 		return st
 	}
 	if v, err := cli.ServerVersion(ctx); err == nil {
@@ -94,6 +170,10 @@ func (s *Service) Status(ctx context.Context) Status {
 		st.Arch = v.Arch
 		st.Available = true
 		st.DockerReady = true
+		// 以 SDK 实际协商出来的端点为准：配置为空时这里是 FromEnv 解析的结果
+		if h := cli.DaemonHost(); h != "" {
+			st.ServerEnd = h
+		}
 	}
 	if list, err := cli.ContainerList(ctx, container.ListOptions{All: true}); err == nil {
 		st.Containers = len(list)

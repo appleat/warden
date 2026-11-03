@@ -29,7 +29,13 @@ log_level: "info"
 # 启动时自动在防火墙放行监听端口（控制端放行 listen，被管端放行 agent_listen）。
 # 只新增一条 allow 规则，不会启停防火墙；需要 root 权限，已存在则跳过。
 auto_open_port: true
-# 留空使用本机默认 socket（/var/run/docker.sock）
+# Docker Engine API 端点，留空使用本机默认值：
+#   Linux / WSL 内运行 → unix:///var/run/docker.sock
+#   Windows           → npipe:////./pipe/docker_engine（Docker Desktop）
+# 也可填远程 daemon，如 tcp://10.0.0.5:2375。
+# 注意：Windows 进程访问不到 WSL 虚拟机内的 /var/run/docker.sock。想管 WSL 里的
+# Docker，推荐把被管端 Agent 装在 WSL 内、用多主机方式接入；或者让 WSL 内的 dockerd
+# 额外监听 TCP（-H tcp://127.0.0.1:2375，务必只绑回环地址）后在此填 tcp://127.0.0.1:2375。
 docker_host: ""
 # 留空自动探测 $SHELL 或 /bin/bash
 shell: ""
