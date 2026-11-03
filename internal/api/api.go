@@ -110,6 +110,16 @@ func NewRouter(d *Deps) *gin.Engine {
 		va.POST("/nacos/config/validate", d.nacosValidateConfig)
 	}
 
+	// 文件收藏夹：个人偏好数据，只落控制端本地库。
+	// 不挂 HostProxy（不能被转发到 Agent），也不挂审计（避免频繁收藏刷日志）。
+	fav := r.Group("/api")
+	fav.Use(middleware.Auth(d.Auth))
+	{
+		fav.GET("/files/favorites", d.listFileFavorites)
+		fav.POST("/files/favorites", d.addFileFavorite)
+		fav.DELETE("/files/favorites/:id", d.deleteFileFavorite)
+	}
+
 	// 主机相关接口：按 ?host= 分发到本机或远程 Agent
 	proxyMW := middleware.HostProxy(d.Fleet)
 	ha := r.Group("/api")

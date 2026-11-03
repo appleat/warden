@@ -3,15 +3,38 @@
     <!-- 全宽工具栏（文件管理页） -->
     <div v-if="!compact" class="toolbar">
       <el-button :icon="Back" size="default" :disabled="atRoot" @click="up">上一级</el-button>
-      <el-breadcrumb separator="/" style="flex: 1; min-width: 0">
-        <el-breadcrumb-item v-for="(seg, i) in crumbs" :key="i">
-          <a style="cursor: pointer" @click="jump(i)">{{ seg.label }}</a>
-        </el-breadcrumb-item>
-      </el-breadcrumb>
+      <div class="fb-path">
+        <el-breadcrumb separator="/">
+          <el-breadcrumb-item v-for="(seg, i) in crumbs" :key="i">
+            <a style="cursor: pointer" @click="jump(i)">{{ seg.label }}</a>
+          </el-breadcrumb-item>
+        </el-breadcrumb>
+      </div>
+      <el-popover v-model:visible="favVisible" placement="bottom-start" :width="330" trigger="click">
+        <template #reference>
+          <el-button :icon="Star" :class="{ 'fav-active': currentFaved }" title="收藏夹" />
+        </template>
+        <FileFavorites
+          :items="favorites"
+          :current-faved="currentFaved"
+          :busy="favBusy"
+          @toggle-current="toggleCurrentFavorite"
+          @open="openFavorite"
+          @remove="removeFavorite"
+        />
+      </el-popover>
+      <el-input
+        v-model="keyword"
+        class="fb-search"
+        :prefix-icon="Search"
+        placeholder="筛选名称"
+        clearable
+      />
       <el-button :icon="Refresh" @click="load()">刷新</el-button>
       <el-button :icon="FolderAdd" @click="openMkdir">新建文件夹</el-button>
       <el-button :icon="DocumentAdd" @click="openTouch">新建文件</el-button>
       <el-button type="primary" :icon="Upload" :loading="uploading" @click="pick">上传</el-button>
+      <span class="muted fb-count">{{ countText }}</span>
     </div>
 
     <!-- 紧凑工具栏（终端右侧滑入面板） -->
@@ -26,13 +49,26 @@
           </el-breadcrumb>
         </div>
         <el-button :icon="Refresh" size="small" title="刷新" @click="load()" />
+        <el-popover v-model:visible="favVisible" placement="bottom-end" :width="280" trigger="click">
+          <template #reference>
+            <el-button :icon="Star" size="small" :class="{ 'fav-active': currentFaved }" title="收藏夹" />
+          </template>
+          <FileFavorites
+            :items="favorites"
+            :current-faved="currentFaved"
+            :busy="favBusy"
+            @toggle-current="toggleCurrentFavorite"
+            @open="openFavorite"
+            @remove="removeFavorite"
+          />
+        </el-popover>
       </div>
       <div class="fb-bar">
         <el-button :icon="FolderAdd" size="small" title="新建文件夹" @click="openMkdir" />
         <el-button :icon="DocumentAdd" size="small" title="新建文件" @click="openTouch" />
         <el-button :icon="Upload" size="small" type="primary" :loading="uploading" title="上传文件" @click="pick" />
-        <div class="spacer"></div>
-        <span class="muted fb-count">{{ rows.length }} 项</span>
+        <el-input v-model="keyword" class="fb-search" size="small" :prefix-icon="Search" placeholder="筛选" clearable />
+        <span class="muted fb-count">{{ countText }}</span>
       </div>
       <el-progress v-if="uploading" :percentage="uploadPct" :stroke-width="4" style="margin: 0 0 6px" />
     </template>
@@ -43,16 +79,18 @@
 
     <div :class="compact ? 'fb-table-wrap' : 'card'" :style="compact ? undefined : 'padding: 0'">
       <el-table
-        :data="rows"
+        :data="filtered"
         v-loading="loading"
         :size="compact ? 'small' : 'default'"
         :height="compact ? '100%' : undefined"
-        :empty-text="compact ? '空目录' : '空目录'"
+        :empty-text="emptyText"
         :class="compact ? 'fb-table' : ''"
+        :sort-orders="['ascending', 'descending', null]"
+        @sort-change="onSortChange"
         @row-dblclick="enter"
         @row-click="onRowClick"
       >
-        <el-table-column :label="'名称'" :min-width="compact ? 150 : 320">
+        <el-table-column :label="'名称'" prop="name" sortable="custom" :min-width="compact ? 150 : 320">
           <template #default="{ row }">
             <div class="row" style="gap: 8px; min-width: 0">
               <el-icon :style="{ color: row.dir ? '#e6a23c' : '#8b94a7', flex: '0 0 auto' }">
@@ -68,20 +106,20 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="大小" :width="compact ? 78 : 110">
+        <el-table-column label="大小" prop="size" sortable="custom" :width="compact ? 78 : 110">
           <template #default="{ row }">
             <span class="muted">{{ row.dir ? '-' : fmtBytes(row.size) }}</span>
           </template>
         </el-table-column>
 
-        <el-table-column v-if="!compact" label="权限" width="110">
+        <el-table-column v-if="!compact" label="权限" prop="mode" sortable="custom" width="110">
           <template #default="{ row }"><span class="mono muted">{{ row.mode }}</span></template>
         </el-table-column>
-        <el-table-column v-if="!compact" label="修改时间" width="170">
+        <el-table-column v-if="!compact" label="修改时间" prop="mod_time" sortable="custom" width="170">
           <template #default="{ row }"><span class="muted">{{ fmtTime(row.mod_time) }}</span></template>
         </el-table-column>
 
-        <el-table-column label="操作" :width="compact ? 76 : 250" :align="'right'">
+        <el-table-column label="操作" :width="compact ? 88 : 250" :align="'right'">
           <template #default="{ row }">
             <template v-if="!compact">
               <el-button v-if="!row.dir" link type="primary" size="small" @click="download(row)">下载</el-button>
@@ -97,7 +135,7 @@
               @click.stop="download(row)"
             />
             <el-dropdown trigger="click" @command="(c: string) => onCommand(c, row)" style="vertical-align: middle; margin-left: 10px;">
-              <el-button link type="primary" :size="compact ? 'small' : 'small'" @click.stop>{{ compact ? '···' : '更多' }}</el-button>
+              <el-button link type="primary" :size="compact ? 'small' : 'small'" style="white-space: nowrap" @click.stop>{{ compact ? '···' : '更多' }}</el-button>
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item v-if="compact && !row.dir" command="download">下载</el-dropdown-item>
@@ -148,11 +186,14 @@ import {
   Upload,
   Download,
   Folder,
-  Document
+  Document,
+  Search,
+  Star
 } from '@element-plus/icons-vue'
 import { api, errMsg, getHostId, getToken } from '../api'
 import { activeHostId } from '../hosts'
 import { fmtBytes, fmtTime } from '../utils'
+import FileFavorites from './FileFavorites.vue'
 
 const props = withDefaults(defineProps<{ compact?: boolean; startPath?: string; hostId?: number }>(), {
   compact: false,
@@ -183,6 +224,126 @@ const loading = ref(false)
 const uploading = ref(false)
 const uploadPct = ref(0)
 const fileInput = ref<HTMLInputElement>()
+
+// ---------- 收藏夹 ----------
+// 收藏按「账号 + 主机范围」隔离：SSH 主机走 ?id=，本机/纳管主机走 ?host=，
+// 后端据此拼成 "ssh:3" / "host:1" 的作用域键。
+const favorites = ref<any[]>([])
+const favVisible = ref(false)
+const favBusy = ref(false)
+
+function favQuery() {
+  return props.hostId ? { id: props.hostId } : { host: getHostId() }
+}
+
+// Windows 路径大小写不敏感，比较收藏与当前目录时统一小写、去尾斜杠
+function samePath(a: string, b: string) {
+  const norm = (p: string) => normPath(p).replace(/\/+$/, '').toLowerCase()
+  return norm(a) === norm(b)
+}
+
+// 路径末段作为收藏显示名；盘符根和 "/" 没有末段，直接显示路径本身
+function baseName(p: string) {
+  const s = normPath(p).replace(/\/+$/, '')
+  if (!s) return '/'
+  if (/^[a-zA-Z]:$/.test(s)) return s
+  return s.split('/').pop() || s
+}
+
+const currentFaved = computed(() => favorites.value.some((f) => samePath(f.path, path.value)))
+
+async function loadFavorites() {
+  try {
+    const list = await api<any[]>('/api/files/favorites', { query: favQuery() })
+    favorites.value = Array.isArray(list) ? list : []
+  } catch {
+    // 收藏夹读不到不该影响文件浏览本身
+    favorites.value = []
+  }
+}
+
+async function toggleCurrentFavorite() {
+  const hit = favorites.value.find((f) => samePath(f.path, path.value))
+  if (hit) return removeFavorite(hit)
+  favBusy.value = true
+  try {
+    await api('/api/files/favorites', {
+      method: 'POST',
+      query: favQuery(),
+      body: { path: path.value, name: baseName(path.value) }
+    })
+    ElMessage.success('已收藏当前目录')
+    await loadFavorites()
+  } catch (e) {
+    ElMessage.error(errMsg(e))
+  } finally {
+    favBusy.value = false
+  }
+}
+
+async function removeFavorite(f: any) {
+  try {
+    await api('/api/files/favorites/' + f.id, { method: 'DELETE' })
+    favorites.value = favorites.value.filter((it) => it.id !== f.id)
+    ElMessage.success('已取消收藏')
+  } catch (e) {
+    ElMessage.error(errMsg(e))
+  }
+}
+
+function openFavorite(f: any) {
+  favVisible.value = false
+  load(f.path)
+}
+
+// 名称筛选 + 表头排序。目录始终排在文件前面（后端默认顺序也是目录优先），
+// 排序只作用在同类之间，避免点「大小」把目录混进文件堆里。
+const keyword = ref('')
+const sortState = reactive<{ prop: string; order: 'ascending' | 'descending' | null }>({
+  prop: '',
+  order: null
+})
+
+function compareRows(a: any, b: any) {
+  if (a.dir !== b.dir) return a.dir ? -1 : 1
+  let r = 0
+  switch (sortState.prop) {
+    case 'name':
+      // numeric 让 file2 排在 file10 前面，中文按拼音比较
+      r = String(a.name).localeCompare(String(b.name), 'zh-CN', { numeric: true, sensitivity: 'base' })
+      break
+    case 'size':
+      r = (a.size || 0) - (b.size || 0)
+      break
+    case 'mod_time':
+      r = (a.mod_time || 0) - (b.mod_time || 0)
+      break
+    case 'mode':
+      r = String(a.mode || '').localeCompare(String(b.mode || ''))
+      break
+  }
+  return sortState.order === 'descending' ? -r : r
+}
+
+const filtered = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  const list = kw ? rows.value.filter((r) => String(r.name).toLowerCase().includes(kw)) : rows.value.slice()
+  if (sortState.prop && sortState.order) list.sort(compareRows)
+  return list
+})
+
+const countText = computed(() => {
+  const total = rows.value.length
+  const shown = filtered.value.length
+  return shown === total ? `${total} 项` : `${shown} / ${total} 项`
+})
+
+const emptyText = computed(() => (keyword.value.trim() ? '没有匹配的文件' : '空目录'))
+
+function onSortChange({ prop, order }: { prop: string | null; order: 'ascending' | 'descending' | null }) {
+  sortState.prop = order && prop ? prop : ''
+  sortState.order = order
+}
 
 const editorVisible = ref(false)
 const saving = ref(false)
@@ -244,6 +405,8 @@ async function load(p?: string) {
   loading.value = true
   try {
     const d = await api<any>('/api/files', scope({ path: p ?? path.value }))
+    // 换目录时清掉筛选词，否则进了新目录却什么都看不到；刷新同一目录则保留
+    if (normPath(d.path) !== normPath(path.value)) keyword.value = ''
     path.value = d.path
     root.value = d.root || ''
     parent.value = d.parent || ''
@@ -460,12 +623,24 @@ async function onCommand(cmd: string, row: any) {
   }
 }
 
-onMounted(() => load(props.startPath || ''))
+onMounted(() => {
+  load(props.startPath || '')
+  loadFavorites()
+})
 
 // 顶部切换主机后，面板里的目录必须跟着换一台机器，否则会对着旧主机操作
-watch(activeHostId, () => load(''))
+watch(activeHostId, () => {
+  load('')
+  loadFavorites()
+})
 // 远程/本机切换或换一台 SSH 主机时，文件面板重置到对应机器的根目录
-watch(() => props.hostId, () => load(''))
+watch(
+  () => props.hostId,
+  () => {
+    load('')
+    loadFavorites()
+  }
+)
 
 defineExpose({ reload: () => load(), currentPath: () => path.value })
 </script>
@@ -492,18 +667,49 @@ defineExpose({ reload: () => load(), currentPath: () => path.value })
 .fb-crumbs {
   flex: 1;
   min-width: 0;
-  overflow: hidden auto;
+  display: flex;
+  justify-content: flex-end;
+  overflow: hidden;
   white-space: nowrap;
   font-size: 12.5px;
   padding: 0 2px;
 }
 .fb-crumbs :deep(.el-breadcrumb) {
+  flex: 0 0 auto;
   font-size: 12.5px;
   white-space: nowrap;
 }
 .fb-count {
   font-size: 11.5px;
   white-space: nowrap;
+}
+/* 当前目录已在收藏夹里：星标按钮换成柔和的橙色，避免橙色实心按钮过于抢眼 */
+.fav-active {
+  color: #d48806;
+  border-color: #f0d3a0;
+  background: #fdf6ec;
+}
+/* 路径条：过长时从左侧截断，始终能看到当前目录名 */
+.fb-path {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+  overflow: hidden;
+}
+.fb-path :deep(.el-breadcrumb) {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.fb-search {
+  width: 200px;
+  flex: 0 0 200px;
+}
+/* 紧凑面板空间有限：搜索框吃掉剩余宽度 */
+.fb.compact .fb-search {
+  width: auto;
+  flex: 1 1 auto;
+  min-width: 60px;
 }
 .fb-table-wrap {
   flex: 1;

@@ -159,6 +159,18 @@ type MySQLConf struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// FileFavorite 是文件管理里的目录收藏，按账号 + 主机范围隔离。
+// Scope 形如 "host:1"（本机或纳管主机）或 "ssh:3"（SSH 主机，走 SFTP），
+// 两类主机的自增 ID 各自独立，必须加前缀区分。
+type FileFavorite struct {
+	ID        uint      `gorm:"primarykey" json:"id"`
+	UserID    uint      `gorm:"not null;uniqueIndex:idx_fav_owner" json:"user_id"`
+	Scope     string    `gorm:"size:64;not null;uniqueIndex:idx_fav_owner" json:"scope"`
+	Path      string    `gorm:"size:512;not null;uniqueIndex:idx_fav_owner" json:"path"`
+	Name      string    `gorm:"size:255" json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // ---------- 存储 ----------
 
 type Store struct {
@@ -192,7 +204,7 @@ func Open(path string) (*Store, error) {
 func (s *Store) migrate() error {
 	return s.DB.AutoMigrate(
 		&User{}, &AuditLog{}, &Monitor{}, &MonitorResult{}, &SSHHost{}, &Setting{}, &Host{},
-		&NacosConf{}, &RedisConf{}, &MySQLConf{},
+		&NacosConf{}, &RedisConf{}, &MySQLConf{}, &FileFavorite{},
 	)
 }
 
