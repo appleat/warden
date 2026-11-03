@@ -1,7 +1,9 @@
 package store
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/glebarez/sqlite"
@@ -171,6 +173,82 @@ type FileFavorite struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// MySQLBackup 是一个 MySQL 定时备份任务。
+//
+// 调度跑在控制端：本机主机直接连库导出，远程主机把导出请求转给该主机的 Agent，
+// 由 Agent 在其网络位置连库，导出的 SQL 流回控制端落盘。
+// 因此任务本身不存密码，凭据仍然只有 MySQLConf 一份，改密码不必回头改任务。
+type MySQLBackup struct {
+	ID     uint   `gorm:"primarykey" json:"id"`
+	HostID uint   `gorm:"index;not null" json:"host_id"`
+	Name   string `gorm:"size:128;not null" json:"name"`
+	Schema string `gorm:"size:128;not null" json:"schema"`
+	// TablesJSON 是选中的表（JSON 数组），空数组表示整库备份
+	TablesJSON string `gorm:"column:tables;type:text" json:"-"`
+
+	// 计划：daily（每天）/ weekly（每周几）/ monthly（每月几号），时间用 Hour:Minute
+	//
+	// 这些字段刻意都不写 gorm:"default:..."：GORM 对带默认值的字段在插入时会省略零值，
+	// 于是「00:30 执行」「不压缩」「保留 0 份（不清理）」都会被数据库默认值悄悄改掉。
+	// 默认值由 api 层在新建时显式设置。
+	Freq     string `gorm:"size:16" json:"freq"`
+	Hour     int    `json:"hour"`
+	Minute   int    `json:"minute"`
+	Weekday  int    `json:"weekday"`   // 0=周日 … 6=周六
+	MonthDay int    `json:"month_day"` // 1-28，避免 31 号在小月空跑
+	Keep     int    `json:"keep"`      // 保留最近 N 份，0 表示不清理
+	Compress bool   `json:"compress"`
+	Enabled  bool   `json:"enabled"`
+
+	// 运行态（落库，重启后界面仍有历史结果）
+	NextRunAt  *time.Time `json:"next_run_at"`
+	LastRunAt  *time.Time `json:"last_run_at"`
+	LastStatus string     `gorm:"size:16" json:"last_status"` // ok | failed | running
+	LastError  string     `gorm:"type:text" json:"last_error"`
+	LastFile   string     `gorm:"size:255" json:"last_file"`
+	LastSize   int64      `json:"last_size"`
+	LastRows   int64      `json:"last_rows"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+
+	// 反序列化后的表列表，仅用于接口输出
+	Tables []string `gorm:"-" json:"tables"`
+}
+
+// AfterFind 把表列表 JSON 还原成切片，调用方不必关心存储格式。
+func (m *MySQLBackup) AfterFind(*gorm.DB) error {
+	m.Tables = nil
+	raw := strings.TrimSpace(m.TablesJSON)
+	if raw == "" {
+		return nil
+	}
+	var list []string
+	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+		// 坏数据不该让整个列表接口报错，当作整库处理
+		return nil
+	}
+	m.Tables = list
+	return nil
+}
+
+// BeforeSave 把表列表序列化进 TablesJSON。
+// Tables 为 nil 表示调用方没有改这一项（如局部更新），保持原值不动。
+func (m *MySQLBackup) BeforeSave(*gorm.DB) error {
+	if m.Tables == nil {
+		return nil
+	}
+	if len(m.Tables) == 0 {
+		m.TablesJSON = ""
+		return nil
+	}
+	b, err := json.Marshal(m.Tables)
+	if err != nil {
+		return err
+	}
+	m.TablesJSON = string(b)
+	return nil
+}
+
 // ---------- 存储 ----------
 
 type Store struct {
@@ -204,7 +282,7 @@ func Open(path string) (*Store, error) {
 func (s *Store) migrate() error {
 	return s.DB.AutoMigrate(
 		&User{}, &AuditLog{}, &Monitor{}, &MonitorResult{}, &SSHHost{}, &Setting{}, &Host{},
-		&NacosConf{}, &RedisConf{}, &MySQLConf{}, &FileFavorite{},
+		&NacosConf{}, &RedisConf{}, &MySQLConf{}, &FileFavorite{}, &MySQLBackup{},
 	)
 }
 

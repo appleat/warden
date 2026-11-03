@@ -140,6 +140,7 @@ func (r *Registry) EncryptToken(token string) (string, error) {
 	return secure.Encrypt(r.key, token)
 }
 
+// decryptToken 返回解密后的 Agent 令牌。
 func (r *Registry) decryptToken(h *store.Host) string {
 	if h.Token == "" {
 		return ""
@@ -149,6 +150,17 @@ func (r *Registry) decryptToken(h *store.Host) string {
 		return ""
 	}
 	return t
+}
+
+// AgentToken 是 decryptToken 的导出版本。
+// 控制端自己向 Agent 发起请求时（如定时备份）需要带上它。
+func (r *Registry) AgentToken(h *store.Host) string { return r.decryptToken(h) }
+
+// HTTPClient 返回按该主机 TLS 配置构造的客户端。
+// 只用于控制端主动发起的少量请求，每次新建 Transport 无所谓；
+// 高频路径仍然走 Proxy。
+func (r *Registry) HTTPClient(h *store.Host) *http.Client {
+	return &http.Client{Transport: r.transport(h)}
 }
 
 // ---------- 目标地址 ----------

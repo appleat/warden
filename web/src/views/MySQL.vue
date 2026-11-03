@@ -588,6 +588,11 @@
         <el-tab-pane label="慢查询" name="slow">
           <MySQLSlow :schema="schema" :databases="databases" />
         </el-tab-pane>
+
+        <!-- 定时备份 -->
+        <el-tab-pane label="定时备份" name="backup">
+          <MySQLBackup ref="backupRef" :schema="schema" :databases="databases" />
+        </el-tab-pane>
       </el-tabs>
     </template>
 
@@ -756,6 +761,7 @@ import { useSplitWidth } from '../useSplit'
 import MySQLTransfer from '../components/MySQLTransfer.vue'
 import MySQLDesigner from '../components/MySQLDesigner.vue'
 import MySQLSlow from '../components/MySQLSlow.vue'
+import MySQLBackup from '../components/MySQLBackup.vue'
 
 const conn = ref<any>({ configured: false, host: '', port: 3306, username: '', read_only: true })
 const overview = ref<any>({ online: false })
@@ -798,6 +804,9 @@ const currentKey = computed(() =>
 
 // 从表列表跳到「导入导出」时预填的表名
 const transferTable = ref('')
+
+// 定时备份面板：切到该页签时让它自己刷新一次
+const backupRef = ref<any>(null)
 
 // 表数据
 const rowPage = ref<any>({ columns: [], rows: [], page: 1, size: 50, has_more: false, cost_ms: 0, pk: [] })
@@ -1633,6 +1642,8 @@ watch(tab, (v) => {
   if (v === 'sessions' && !sessions.value.length) loadSessions()
   if (v === 'info' && !Object.keys(infoSections.value).length) loadVariables()
   if (v === 'metrics') loadOverview()
+  // 备份任务可能被定时器改过状态，切进来时重新拉一次
+  if (v === 'backup') backupRef.value?.load()
 })
 
 onMounted(async () => {

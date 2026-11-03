@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"warden/internal/auth"
+	"warden/internal/backup"
 	"warden/internal/config"
 	"warden/internal/filemgr"
 	"warden/internal/fleet"
@@ -31,6 +32,7 @@ type Deps struct {
 	Monitor *monitor.Service
 	Notify  *monitor.Notifier
 	Fleet   *fleet.Registry
+	Backup  *backup.Service
 	Version string
 }
 
@@ -118,6 +120,23 @@ func NewRouter(d *Deps) *gin.Engine {
 		fav.GET("/files/favorites", d.listFileFavorites)
 		fav.POST("/files/favorites", d.addFileFavorite)
 		fav.DELETE("/files/favorites/:id", d.deleteFileFavorite)
+	}
+
+	// MySQL 定时备份：任务与备份文件都在控制端，
+	// 因此不挂 HostProxy —— 远程主机的库由控制端调度、Agent 执行（见 agent 路由）。
+	// 路径刻意不用 /api/mysql 前缀，避免被前端当成「跟随主机」的接口再叠一次 host 参数。
+	ba := r.Group("/api")
+	ba.Use(middleware.Auth(d.Auth), middleware.Audit(d.Store))
+	{
+		ba.GET("/dbbackup/tasks", d.listMySQLBackups)
+		ba.POST("/dbbackup/tasks", middleware.RequireRole(auth.RoleOperator), d.saveMySQLBackup)
+		ba.PUT("/dbbackup/tasks/:id", middleware.RequireRole(auth.RoleOperator), d.saveMySQLBackup)
+		ba.DELETE("/dbbackup/tasks/:id", middleware.RequireRole(auth.RoleOperator), d.deleteMySQLBackup)
+		ba.POST("/dbbackup/tasks/:id/toggle", middleware.RequireRole(auth.RoleOperator), d.toggleMySQLBackup)
+		ba.POST("/dbbackup/tasks/:id/run", middleware.RequireRole(auth.RoleOperator), d.runMySQLBackup)
+		ba.GET("/dbbackup/files", d.listMySQLBackupFiles)
+		ba.GET("/dbbackup/files/download", d.downloadMySQLBackupFile)
+		ba.DELETE("/dbbackup/files", middleware.RequireRole(auth.RoleOperator), d.deleteMySQLBackupFile)
 	}
 
 	// 主机相关接口：按 ?host= 分发到本机或远程 Agent

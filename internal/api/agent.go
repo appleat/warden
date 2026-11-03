@@ -152,6 +152,7 @@ func NewAgentRouter(d *Deps, token string) *gin.Engine {
 			api.POST("/mysql/query", d.mysqlQuery)
 			api.POST("/mysql/processes/kill", d.mysqlKillSession)
 			api.POST("/mysql/export", d.mysqlExport)
+			api.POST("/mysql/backup/dump", d.agentMySQLBackupDump)
 			api.POST("/mysql/import", d.mysqlImport)
 			api.POST("/mysql/table/create", d.mysqlCreateTable)
 			api.POST("/mysql/table/alter", d.mysqlAlterTable)

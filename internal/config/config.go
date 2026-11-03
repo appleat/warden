@@ -35,6 +35,10 @@ type Config struct {
 	// （控制端放行 listen，被管端放行 agent_listen）
 	AutoOpenPort bool `yaml:"auto_open_port"`
 
+	// BackupDir 是定时备份文件的落盘目录，留空时用 data_dir/backups。
+	// 备份文件可能很大，单独拎出来方便挂到独立磁盘。
+	BackupDir string `yaml:"backup_dir"`
+
 	path string
 }
 
@@ -83,6 +87,7 @@ func Load() (*Config, error) {
 	envOverride(&cfg.CertFile, "WARDEN_CERT_FILE")
 	envOverride(&cfg.KeyFile, "WARDEN_KEY_FILE")
 	envOverride(&cfg.JWTSecret, "WARDEN_JWT_SECRET")
+	envOverride(&cfg.BackupDir, "WARDEN_BACKUP_DIR")
 	if v := os.Getenv("WARDEN_AUTO_OPEN_PORT"); v != "" {
 		cfg.AutoOpenPort = parseBool(v, cfg.AutoOpenPort)
 	}
@@ -124,8 +129,17 @@ func Load() (*Config, error) {
 	return &cfg, nil
 }
 
+// DBPath 返回 SQLite 数据库文件路径。
 func (c *Config) DBPath() string {
 	return filepath.Join(c.DataDir, "warden.db")
+}
+
+// BackupsPath 返回备份根目录，未配置 backup_dir 时落在 data_dir/backups。
+func (c *Config) BackupsPath() string {
+	if v := strings.TrimSpace(c.BackupDir); v != "" {
+		return v
+	}
+	return filepath.Join(c.DataDir, "backups")
 }
 
 // SecretKey 用于加密敏感字段（SSH 密码等），由 JWT 密钥派生。

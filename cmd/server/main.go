@@ -15,6 +15,7 @@ import (
 
 	"warden/internal/api"
 	"warden/internal/auth"
+	"warden/internal/backup"
 	"warden/internal/config"
 	"warden/internal/filemgr"
 	"warden/internal/fleet"
@@ -113,6 +114,14 @@ func runServer(cfg *config.Config) {
 	monitorSvc := monitor.New(db, notifier)
 	monitorSvc.Start(ctx)
 
+	backupSvc, err := backup.New(db, reg, cfg.SecretKey(), cfg.BackupsPath())
+	if err != nil {
+		slog.Error("初始化备份服务失败", "err", err)
+		os.Exit(1)
+	}
+	backupSvc.Start(ctx)
+	slog.Info("MySQL 定时备份已就绪", "dir", backupSvc.Root())
+
 	fw := system.NewFirewall()
 
 	deps := &api.Deps{
@@ -126,6 +135,7 @@ func runServer(cfg *config.Config) {
 		Monitor: monitorSvc,
 		Notify:  notifier,
 		Fleet:   reg,
+		Backup:  backupSvc,
 		Version: version,
 	}
 
