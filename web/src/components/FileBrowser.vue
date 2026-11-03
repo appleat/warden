@@ -120,7 +120,7 @@
       <el-input v-model="editing.content" type="textarea" :rows="compact ? 16 : 22" class="mono" resize="vertical" />
       <template #footer>
         <span class="muted" style="float: left; font-size: 11.5px; line-height: 32px">
-          {{ fmtBytes(editing.size) }} · 仅支持文本文件，超过 4MB 请下载编辑
+          {{ fmtBytes(editing.size) }} · {{ editing.encodingLabel }} · 仅支持文本文件，超过 4MB 请下载编辑
         </span>
         <el-button @click="editorVisible = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="saveFile">保存</el-button>
@@ -186,7 +186,7 @@ const fileInput = ref<HTMLInputElement>()
 
 const editorVisible = ref(false)
 const saving = ref(false)
-const editing = reactive<any>({ path: '', name: '', content: '', size: 0 })
+const editing = reactive<any>({ path: '', name: '', content: '', size: 0, encoding: 'utf-8', encodingLabel: 'UTF-8' })
 
 const nameVisible = ref(false)
 const nameTitle = ref('')
@@ -373,6 +373,8 @@ async function openEdit(row: any) {
     editing.name = row.name
     editing.content = d.content
     editing.size = d.size
+    editing.encoding = d.encoding || 'utf-8'
+    editing.encodingLabel = d.encodingLabel || 'UTF-8'
     editorVisible.value = true
   } catch (e) {
     ElMessage.error(errMsg(e))
@@ -382,7 +384,10 @@ async function openEdit(row: any) {
 async function saveFile() {
   saving.value = true
   try {
-    await api('/api/files/content', { method: 'PUT', ...scope(undefined, { path: editing.path, content: editing.content }) })
+    await api('/api/files/content', {
+      method: 'PUT',
+      ...scope(undefined, { path: editing.path, content: editing.content, encoding: editing.encoding }),
+    })
     ElMessage.success('已保存')
     editorVisible.value = false
     load()

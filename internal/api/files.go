@@ -102,18 +102,27 @@ func (d *Deps) readFile(c *gin.Context) {
 		return
 	}
 	defer b.Close()
-	content, size, err := b.Read(c.Query("path"))
+	raw, size, err := b.Read(c.Query("path"))
 	if err != nil {
 		httpx.BadRequest(c, err.Error())
 		return
 	}
-	httpx.OK(c, gin.H{"content": content, "size": size})
+	// 后端返回的是原始字节：本机文件常为 GBK，必须转成 UTF-8 再给编辑器，
+	// 否则 JSON 里的无效字节会变成 U+FFFD（页面上的乱码）。
+	content, enc := filemgr.DecodeText([]byte(raw))
+	httpx.OK(c, gin.H{
+		"content":       content,
+		"size":          size,
+		"encoding":      enc,
+		"encodingLabel": filemgr.EncodingLabel(enc),
+	})
 }
 
 func (d *Deps) writeFile(c *gin.Context) {
 	var req struct {
-		Path    string `json:"path" binding:"required"`
-		Content string `json:"content"`
+		Path     string `json:"path" binding:"required"`
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpx.BadRequest(c, "参数不完整")
@@ -125,7 +134,13 @@ func (d *Deps) writeFile(c *gin.Context) {
 		return
 	}
 	defer b.Close()
-	if err := b.Write(req.Path, req.Content); err != nil {
+	// 按打开时检测到的编码写回，保持文件原有编码不被改成 UTF-8。
+	raw, err := filemgr.EncodeText(req.Content, req.Encoding)
+	if err != nil {
+		httpx.BadRequest(c, "内容无法用 "+filemgr.EncodingLabel(req.Encoding)+" 编码保存："+err.Error())
+		return
+	}
+	if err := b.Write(req.Path, string(raw)); err != nil {
 		httpx.BadRequest(c, err.Error())
 		return
 	}
