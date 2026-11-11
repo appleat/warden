@@ -252,7 +252,7 @@ function isGroupActive(item: NavItem) {
 }
 
 const user = ref<any>(null)
-const version = ref('1.0.0')
+const version = ref('1.6.7')
 const alive = ref(true)
 
 const roleLabel = computed(() => {
@@ -310,7 +310,7 @@ onMounted(async () => {
   try {
     user.value = await api('/api/auth/me')
     const info = await api('/api/system/info')
-    version.value = info.version || '1.0.0'
+    version.value = info.version || '1.6.7'
   } catch {}
   await loadHosts()
   // 定期刷新主机状态，让顶栏指示灯保持真实

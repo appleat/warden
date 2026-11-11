@@ -9,7 +9,7 @@ rem    build.bat                        build every platform (incl. frontend)
 rem    build.bat linux                  linux/amd64 + linux/arm64
 rem    build.bat linux/arm64            only linux/arm64
 rem    build.bat windows -Pack          windows build + zip
-rem    build.bat -SkipWeb -Version 1.2.0
+rem    build.bat -SkipWeb -Version 1.6.7
 rem ===========================================================================
 setlocal
 for /f "tokens=2 delims=:" %%c in ('chcp') do set "OLDCP=%%c"

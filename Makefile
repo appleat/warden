@@ -1,5 +1,5 @@
 APP      := warden
-VERSION  ?= 1.0.0
+VERSION  ?= 1.6.7
 BUILT    := $(shell date +%Y-%m-%dT%H:%M:%S)
 LDFLAGS  := -s -w -X main.version=$(VERSION) -X main.buildTime=$(BUILT)
 

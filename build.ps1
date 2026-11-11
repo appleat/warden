@@ -5,7 +5,7 @@
 #   build.bat linux                    只构建 linux/amd64 与 linux/arm64
 #   build.bat linux/arm64              只构建 linux/arm64
 #   build.bat windows -Pack            构建 Windows 版并打 zip
-#   build.bat -Version 1.2.0 -Clean    指定版本号并先清空 dist
+#   build.bat -Version 1.6.7 -Clean    指定版本号并先清空 dist
 #   build.bat -SkipWeb                 跳过前端构建（复用 web\dist）
 
 [CmdletBinding()]
@@ -14,7 +14,7 @@ param(
     [string[]]$Target,
 
     [Alias('v')]
-    [string]$Version = '1.0.0',
+    [string]$Version = '1.6.7',
 
     [switch]$SkipWeb,
     [switch]$Pack,
@@ -59,7 +59,7 @@ function Show-Usage {
     Write-Host '  build.bat linux/arm64              只构建 linux/arm64'
     Write-Host '  build.bat windows -Pack            构建 Windows 版并打 zip'
     Write-Host '  build.bat -SkipWeb                 跳过前端，只用现有 web\dist'
-    Write-Host '  build.bat -Version 1.2.0 -Clean    指定版本号并先清空 dist'
+    Write-Host '  build.bat -Version 1.6.7 -Clean    指定版本号并先清空 dist'
     Write-Host ''
     Write-Host '  支持平台：windows/amd64 windows/arm64 linux/amd64 linux/arm64'
     Write-Host '            darwin/amd64 darwin/arm64'

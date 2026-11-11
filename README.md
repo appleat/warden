@@ -2,6 +2,8 @@
 
 > **守护者** —— 一个二进制，守护你所有的 Linux 服务器。
 
+**当前版本：v1.6.7**（稳定基线，不含 Oracle 模块；`warden -version` 可查看构建版本）。
+
 Linux 服务器管理面板。单二进制交付：前端 `go:embed` 进 Go 程序，目标机零依赖。支持单机直管，也支持用一个控制端纳管多台服务器。
 
 ```
@@ -96,7 +98,7 @@ go test ./...  # 单元测试：路径穿越、zip slip、AES、TOTP、防火墙
 | `build.bat linux`          | 只构建 linux/amd64 与 linux/arm64                           |
 | `build.bat linux/arm64`    | 只构建单个目标，可写 `windows/amd64`、`darwin/arm64` 等 |
 | `build.bat -Pack`          | 额外打 zip（二进制 + `config.yaml` + `deploy/`）        |
-| `build.bat -Version 1.2.0` | 注入版本号，`warden -version` 可查看                      |
+| `build.bat -Version 1.6.7` | 注入版本号，`warden -version` 可查看                      |
 | `build.bat -SkipWeb`       | 跳过前端构建，复用现有 `web/dist`                         |
 | `build.bat -Clean`         | 构建前清空 `dist\`                                        |
 | `build.bat -h`             | 查看帮助                                                    |
@@ -163,3 +165,13 @@ deploy/                       systemd unit 与安装脚本
 - 进程结束接口只接受运营者及以上角色，并硬性拒绝 PID ≤ 1 与 Warden 自身进程；
   界面上这两类进程的操作按钮也会置灰，避免误操作把自己锁在服务器外面。
 - 默认监听 `:8080` 无 TLS，公网部署请配 `cert_file`/`key_file` 或置于 Nginx 之后。
+
+## 版本记录
+
+| 版本    | 说明                                                                                                                       |
+| ------- | -------------------------------------------------------------------------------------------------------------------------- |
+| v1.6.7  | 移除 Oracle 数据库模块（连接编辑与完整管理视图），代码回到 v1.6.6 稳定基线；统一版本号（`main.go`、`Makefile`、`build.ps1`、`package.json`、前端侧栏）。 |
+| v1.6.6  | 服务页面左树分栏宽度可拖动（`useSplit`），布局在 MySQL / Redis / Nacos 三页统一。                                              |
+
+版本号由构建脚本通过 `-X main.version` 注入；`make build VERSION=x.y.z` 或 `build.bat -Version x.y.z` 可覆盖默认值。
+未注入时 `warden -version` 显示源码内默认值，前端侧栏显示 `/api/system/info` 返回的版本。
