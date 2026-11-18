@@ -290,6 +290,14 @@ func (s *Service) Delete(p string) error {
 	if abs == s.root {
 		return errors.New("不能删除根目录")
 	}
+	// os.RemoveAll 对不存在的路径返回 nil。不先判存在，请求打错主机时
+	// （例如漏了 host 参数落到控制端本机）会「提示已删除但文件还在」。
+	if _, err := os.Lstat(abs); err != nil {
+		if os.IsNotExist(err) {
+			return errors.New("文件不存在或已被删除")
+		}
+		return err
+	}
 	return os.RemoveAll(abs)
 }
 

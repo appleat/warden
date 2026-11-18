@@ -172,6 +172,13 @@
         <el-button type="primary" @click="submitName">确定</el-button>
       </template>
     </el-dialog>
+
+    <FilePermissionDialog
+      v-model="permVisible"
+      :mode="permMode"
+      :busy="permBusy"
+      @apply="submitPerm"
+    />
   </div>
 </template>
 
@@ -194,6 +201,7 @@ import { api, errMsg, getHostId, getToken } from '../api'
 import { activeHostId } from '../hosts'
 import { fmtBytes, fmtTime } from '../utils'
 import FileFavorites from './FileFavorites.vue'
+import FilePermissionDialog from './FilePermissionDialog.vue'
 
 const props = withDefaults(defineProps<{ compact?: boolean; startPath?: string; hostId?: number }>(), {
   compact: false,
@@ -353,6 +361,39 @@ const nameVisible = ref(false)
 const nameTitle = ref('')
 const nameValue = ref('')
 let nameAction: (v: string) => void = () => {}
+
+// ---------- 修改权限 ----------
+// 弹窗按当前 mode_bit 预填三位八进制，勾选矩阵与输入框双向同步
+const permVisible = ref(false)
+const permBusy = ref(false)
+const permTarget = ref<any>(null)
+const permMode = computed<string | number>(() => {
+  const row = permTarget.value
+  if (!row) return '644'
+  if (typeof row.mode_bit === 'number') return row.mode_bit
+  return row.mode || '644'
+})
+
+function openChmod(row: any) {
+  permTarget.value = row
+  permVisible.value = true
+}
+
+async function submitPerm(mode: string) {
+  const row = permTarget.value
+  if (!row) return
+  permBusy.value = true
+  try {
+    await api('/api/files/chmod', scope(undefined, { path: row.path, mode }))
+    ElMessage.success('权限已修改')
+    permVisible.value = false
+    load()
+  } catch (e) {
+    ElMessage.error(errMsg(e))
+  } finally {
+    permBusy.value = false
+  }
+}
 
 // 统一路径分隔符，并把 Windows 的 "D:" 补成 "D:/"，避免拼出 "D:/D:" 这类非法路径
 function normPath(p: string) {
@@ -586,14 +627,7 @@ async function onCommand(cmd: string, row: any) {
       return
     }
     if (cmd === 'chmod') {
-      const { value } = await ElMessageBox.prompt('输入八进制权限，例如 755', '修改权限', {
-        inputValue: '644',
-        inputPattern: /^[0-7]{3,4}$/,
-        inputErrorMessage: '请输入 3~4 位八进制数'
-      })
-      await api('/api/files/chmod', scope(undefined, { path: row.path, mode: value }))
-      ElMessage.success('权限已修改')
-      load()
+      openChmod(row)
       return
     }
     if (cmd === 'compress') {
@@ -613,7 +647,9 @@ async function onCommand(cmd: string, row: any) {
         type: 'warning',
         confirmButtonClass: 'el-button--danger'
       })
-      await api('/api/files', { method: 'DELETE', query: props.hostId ? { path: row.path, id: props.hostId } : { path: row.path } })
+      // 必须带上主机参数：漏掉 host 会打到控制端本机磁盘，
+      // 而 os.RemoveAll 对不存在的路径不报错，表现为「提示已删除但文件还在」
+      await api('/api/files', { method: 'DELETE', query: scope({ path: row.path }).query })
       ElMessage.success('已删除')
       load()
     }
